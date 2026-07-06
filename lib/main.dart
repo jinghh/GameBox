@@ -1,37 +1,33 @@
-// 经典坦克大战 - Flutter 复刻版
-// 方向键 / WASD 移动，空格开火，P 暂停；移动端使用屏幕方向键与开火键。
+// 经典小游戏 —— 纯单机离线游戏集合（坦克大战 / 2048 / 贪吃蛇 / 扫雷）。
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'game/battle_city_game.dart';
+import 'app/theme.dart';
+import 'home/home_page.dart';
+import 'shared/best_score_store.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // 纯移动端：锁定竖屏，保证战场正方形铺满屏幕宽度
-  SystemChrome.setPreferredOrientations(<DeviceOrientation>[
+  // 纯移动端：锁定竖屏
+  await SystemChrome.setPreferredOrientations(<DeviceOrientation>[
     DeviceOrientation.portraitUp,
   ]);
-  runApp(const TankApp());
+  // 预热本地存储（最高分持久化），在各游戏页读取前就绪
+  await BestScoreStore.ensureLoaded();
+  runApp(const MiniGamesApp());
 }
 
-class TankApp extends StatelessWidget {
-  const TankApp({super.key});
+class MiniGamesApp extends StatelessWidget {
+  const MiniGamesApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '坦克大战',
+      title: '经典小游戏',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFF1A1A1A),
-        fontFamily: 'monospace',
-      ),
-      home: const Scaffold(
-        backgroundColor: Color(0xFF1A1A1A),
-        body: BattleCityGame(),
-      ),
+      theme: kAppTheme,
+      home: const HomePage(),
     );
   }
 }

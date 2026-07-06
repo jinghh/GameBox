@@ -2,6 +2,7 @@
 // 控制：左半屏拖动 = 虚拟摇杆（4 向移动）；右下按钮 = 开火（按下即时发射，按住连发）。
 // 双人合作：P1 左半屏、P2 右半屏，各自摇杆 + 开火；共享生命与得分。
 
+import 'dart:io' show ProcessInfo;
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -63,6 +64,10 @@ class _BattleCityGameState extends State<BattleCityGame>
   final ValueNotifier<int> _frameRepaint = ValueNotifier<int>(0); // 实体层：游戏中每帧
   final ValueNotifier<int> _terrainRepaint = ValueNotifier<int>(0); // 地形层：仅在砖墙/装甲变化时
   int _lastHudSig = 0; // 上一次影响 HUD/覆盖层的离散状态指纹
+
+  // 性能监控（诊断"越玩越卡"P0）：默认开启，定位根因后点右上角仪表图标关闭。
+  final _Perf _perf = _Perf();
+  bool _showPerf = true;
 
   // 输入：P1 / P2 各自方向与开火
   Dir? _dir1, _dir2;
@@ -225,10 +230,15 @@ class _BattleCityGameState extends State<BattleCityGame>
     }
     _lastElapsed = elapsed;
     _time += dt;
+    _perf.tick(dt);
 
     switch (phase) {
       case Phase.playing:
+        _perf.updateSw.start();
         update(dt);
+        _perf.updateSw.stop();
+        _perf.lastUpdateUs = _perf.updateSw.elapsedMicroseconds;
+        _perf.updateSw.reset();
         break;
       case Phase.levelClear:
         _levelClearTimer -= dt;
@@ -813,6 +823,11 @@ class _BattleCityGameState extends State<BattleCityGame>
     setState(() {});
   }
 
+  void _togglePerf() {
+    _showPerf = !_showPerf;
+    setState(() {});
+  }
+
   void _onPrimaryTap() {
     switch (phase) {
       case Phase.paused:
@@ -918,6 +933,17 @@ class _BattleCityGameState extends State<BattleCityGame>
                     ),
                     Positioned(left: 0, right: 0, top: 0, child: _buildHud()),
                     if (phase == Phase.playing) ..._buildControls(w, h),
+                    if (_showPerf)
+                      Positioned(
+                        top: 46,
+                        left: 6,
+                        child: IgnorePointer(
+                          child: CustomPaint(
+                            size: const Size(230, 56),
+                            painter: _PerfPainter(_scene, _perf, _frameRepaint),
+                          ),
+                        ),
+                      ),
                     if (phase != Phase.playing)
                       Positioned.fill(child: _buildOverlay()),
                   ],
@@ -996,6 +1022,8 @@ class _BattleCityGameState extends State<BattleCityGame>
             phase == Phase.paused ? Icons.play_arrow : Icons.pause,
             _togglePause,
           ),
+          const SizedBox(width: 2),
+          _iconButton(Icons.speed, _togglePerf),
         ],
       ),
     );
@@ -1244,10 +1272,8 @@ class _BattleCityGameState extends State<BattleCityGame>
             setState(() {});
           }),
           const SizedBox(height: 12),
-          _overlayButton('退出到主菜单', Icons.home, () {
-            phase = Phase.start;
-            loadLevel(0, twoPlayer: false);
-            setState(() {});
+          _overlayButton('返回游戏列表', Icons.home, () {
+            Navigator.of(context).pop();
           }),
         ],
       ),
@@ -1324,6 +1350,10 @@ class _BattleCityGameState extends State<BattleCityGame>
                   fontSize: 11,
                   height: 1.6,
                   decoration: TextDecoration.none)),
+          const SizedBox(height: 22),
+          _overlayButton('返回游戏列表', Icons.home, () {
+            Navigator.of(context).pop();
+          }),
         ],
       ),
     );
@@ -1654,4 +1684,75 @@ class _HoldButtonState extends State<_HoldButton> {
       child: widget.child,
     );
   }
+}
+
+// ---- 性能监控（诊断"越玩越卡"P0）----
+// 用实测代替猜测：逐帧记录 update() 耗时、FPS、各实体数量与进程内存(RSS)。
+// 读法：
+//   - upd（微秒）随时间单调上升 → 逻辑层有累积泄漏（配合下方实体数量定位是哪类对象）；
+//   - FPS 下降但 upd 一直很低   → 卡在渲染/合成/GPU 或 GC；
+//   - RSS（MB）持续上升          → 内存泄漏（音频/资源未释放等）；
+//   - 某类实体数量只增不减       → 该列表没被正确清理。
+class _Perf {
+  final Stopwatch updateSw = Stopwatch();
+  int lastUpdateUs = 0;
+  double acc = 0;
+  int frames = 0;
+  int fps = 0;
+  int rssKb = 0;
+
+  void tick(double dt) {
+    acc += dt;
+    frames++;
+    if (acc >= 0.5) {
+      fps = (frames / acc).round();
+      acc = 0;
+      frames = 0;
+      // 每 0.5s 采样一次进程内存，避免每帧调用造成额外开销
+      rssKb = ProcessInfo.currentRss ~/ 1024;
+    }
+  }
+}
+
+class _PerfPainter extends CustomPainter {
+  final SceneView scene;
+  final _Perf perf;
+  _PerfPainter(this.scene, this.perf, Listenable repaint)
+      : super(repaint: repaint);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = const Color(0xB3000000),
+    );
+    final mem = (perf.rssKb / 1024).toStringAsFixed(1);
+    final lines = <String>[
+      'FPS ${perf.fps}   upd ${perf.lastUpdateUs}us',
+      'B${scene.bullets.length} E${scene.explosions.length} '
+          'T${scene.enemies.length} P${scene.players.length}',
+      'RSS ${mem}MB',
+    ];
+    double y = 4;
+    for (final s in lines) {
+      final tp = TextPainter(
+        text: TextSpan(
+          text: s,
+          style: const TextStyle(
+            color: Color(0xFF7CFFB2),
+            fontSize: 11,
+            fontFamily: 'monospace',
+            decoration: TextDecoration.none,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(6, y));
+      tp.dispose();
+      y += 16;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

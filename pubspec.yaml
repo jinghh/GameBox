@@ -1,5 +1,5 @@
 name: tank_app
-description: "A new Flutter project."
+description: "经典小游戏：纯单机离线，包含坦克大战、2048、贪吃蛇、扫雷、俄罗斯方块。"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -36,6 +36,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   audioplayers: ^6.8.1
   wakelock_plus: ^1.6.1
+  shared_preferences: ^2.3.3
 
 dev_dependencies:
   flutter_test:
