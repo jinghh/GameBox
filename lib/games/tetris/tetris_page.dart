@@ -1,15 +1,17 @@
 // 俄罗斯方块 —— 经典 Tetris。方块下落、旋转、消行，等级提速，堆顶判负。
 // 纯单机；最高分本地保存。CustomPainter 渲染（与坦克/蛇同款高效画法）。
-// 控制：左/右/软降（长按连发）、旋转、硬降。
+// 控制：左/右/软降（长按连发）、旋转、硬降；按键有 click 音；支持暂停、震动、全局静音。
 
 import 'dart:async';
 import 'dart:math';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../shared/best_score_store.dart';
 import '../../shared/game_shell.dart';
+import '../../shared/sound_store.dart';
 
 const int _cols = 10;
 const int _rows = 20;
@@ -67,12 +69,18 @@ class _TetrisPageState extends State<TetrisPage> {
   _Piece? _cur;
   int _next = 0;
   int _score = 0, _best = 0, _level = 1, _lines = 0;
-  bool _over = false, _started = false;
+  bool _over = false, _started = false, _paused = false;
   Timer? _gravity;
   Timer? _repInit; // 长按连发：首次延迟
   Timer? _repLoop; // 长按连发：周期
   final Random _rng = Random();
   final FocusNode _focus = FocusNode();
+
+  // 按键音：单个预加载 AudioPlayer，seek+resume 复用（避开 AudioPool 崩溃路径）
+  AudioPlayer? _click;
+  final Stopwatch _clickWatch = Stopwatch();
+  int _lastClickMs = -9999;
+  int _lastHapticMs = -9999;
 
   int get _gravityMs => max(80, 820 - (_level - 1) * 72);
 
@@ -81,6 +89,15 @@ class _TetrisPageState extends State<TetrisPage> {
     super.initState();
     _best = BestScoreStore.get(_bestKey);
     _reset();
+    _initClick();
+  }
+
+  void _initClick() {
+    final p = AudioPlayer();
+    _click = p;
+    p.setReleaseMode(ReleaseMode.stop);
+    p.setVolume(0.5);
+    p.setSource(AssetSource('sounds/click.wav')); // 异步预加载，失败忽略
   }
 
   @override
@@ -88,6 +105,7 @@ class _TetrisPageState extends State<TetrisPage> {
     _gravity?.cancel();
     _repInit?.cancel();
     _repLoop?.cancel();
+    _click?.dispose();
     _focus.dispose();
     super.dispose();
   }
@@ -100,19 +118,34 @@ class _TetrisPageState extends State<TetrisPage> {
     _lines = 0;
     _over = false;
     _started = false;
+    _paused = false;
     _cur = null;
     _next = _rng.nextInt(7);
     _spawn();
   }
 
   void _newGame() {
+    _playClick();
     setState(_reset);
   }
 
   void _start() {
     if (_started || _over) return;
+    _playClick();
     _started = true;
     _rearmGravity();
+    setState(() {});
+  }
+
+  void _togglePause() {
+    if (!_started || _over) return;
+    _paused = !_paused;
+    _stopRepeat();
+    if (_paused) {
+      _gravity?.cancel();
+    } else {
+      _rearmGravity();
+    }
     setState(() {});
   }
 
@@ -151,13 +184,16 @@ class _TetrisPageState extends State<TetrisPage> {
   }
 
   void _moveLR(int dc) {
-    if (_cur == null || !_started || _over) return;
+    if (_cur == null || !_started || _over || _paused) return;
+    _playClick();
+    _pulse();
     _tryMove(_cur!.copyWith(c: _cur!.c + dc));
   }
 
   void _rotate() {
-    if (_cur == null || !_started || _over) return;
-    // 踢墙：旋转后碰撞则尝试横向偏移
+    if (_cur == null || !_started || _over || _paused) return;
+    _playClick();
+    _pulse();
     for (final dc in [0, -1, 1, -2, 2]) {
       if (_tryMove(_cur!.copyWith(rot: (_cur!.rot + 1) % 4, c: _cur!.c + dc))) {
         return;
@@ -166,7 +202,9 @@ class _TetrisPageState extends State<TetrisPage> {
   }
 
   void _softDrop() {
-    if (_cur == null || !_started || _over) return;
+    if (_cur == null || !_started || _over || _paused) return;
+    _playClick();
+    _pulse();
     if (_tryMove(_cur!.copyWith(r: _cur!.r + 1))) {
       setState(() => _score += 1);
       _updateBest();
@@ -176,13 +214,15 @@ class _TetrisPageState extends State<TetrisPage> {
   }
 
   void _hardDrop() {
-    if (_cur == null || !_started || _over) return;
+    if (_cur == null || !_started || _over || _paused) return;
+    _playClick();
     int dist = 0;
     var p = _cur!;
     while (_canPlace(p.copyWith(r: p.r + 1))) {
       p = p.copyWith(r: p.r + 1);
       dist++;
     }
+    if (dist > 0) HapticFeedback.heavyImpact();
     setState(() {
       _cur = p;
       _score += dist * 2;
@@ -216,6 +256,11 @@ class _TetrisPageState extends State<TetrisPage> {
       }
     }
     if (cleared == 0) return;
+    if (cleared >= 4) {
+      HapticFeedback.heavyImpact(); // Tetris！
+    } else {
+      HapticFeedback.mediumImpact();
+    }
     while (kept.length < _rows) {
       kept.insert(0, List<int>.filled(_cols, 0));
     }
@@ -232,7 +277,7 @@ class _TetrisPageState extends State<TetrisPage> {
   }
 
   void _tick() {
-    if (_over || !_started || _cur == null) return;
+    if (_over || !_started || _paused || _cur == null) return;
     if (_canPlace(_cur!.copyWith(r: _cur!.r + 1))) {
       setState(() => _cur = _cur!.copyWith(r: _cur!.r + 1));
     } else {
@@ -254,6 +299,28 @@ class _TetrisPageState extends State<TetrisPage> {
       _best = _score;
       BestScoreStore.setIfGreater(_bestKey, _best);
     }
+  }
+
+  /// 按键音（节流 80ms；全局静音时不响）
+  void _playClick() {
+    if (kMuted.value) return;
+    final c = _click;
+    if (c == null) return;
+    if (!_clickWatch.isRunning) _clickWatch.start();
+    final now = _clickWatch.elapsedMilliseconds;
+    if (now - _lastClickMs < 80) return;
+    _lastClickMs = now;
+    c.seek(Duration.zero);
+    c.resume();
+  }
+
+  /// 按键轻震动（节流 90ms,长按连发时不会嗡嗡作响）
+  void _pulse() {
+    if (!_clickWatch.isRunning) _clickWatch.start();
+    final now = _clickWatch.elapsedMilliseconds;
+    if (now - _lastHapticMs < 90) return;
+    _lastHapticMs = now;
+    HapticFeedback.selectionClick();
   }
 
   // ---- 长按连发 ----
@@ -306,6 +373,13 @@ class _TetrisPageState extends State<TetrisPage> {
     return GameShell(
       title: '俄罗斯方块',
       actions: [
+        if (_started && !_over)
+          IconButton(
+            tooltip: _paused ? '继续' : '暂停',
+            icon: Icon(_paused ? Icons.play_arrow : Icons.pause,
+                color: const Color(0xFFFFA726)),
+            onPressed: _togglePause,
+          ),
         TextButton(
           onPressed: _newGame,
           child:
@@ -318,9 +392,9 @@ class _TetrisPageState extends State<TetrisPage> {
         onKeyEvent: _onKey,
         child: LayoutBuilder(
           builder: (ctx, c) {
-            const sideW = 92.0;
-            final maxBoardW = c.maxWidth - sideW - 24;
-            final availH = c.maxHeight - 36 /*stats*/ - 116 /*controls*/;
+            final maxBoardW = c.maxWidth - 24;
+            final availH =
+                c.maxHeight - 58 /*top*/ - 22 /*gaps*/ - 116 /*controls*/;
             var boardH = availH.clamp(240.0, 560.0);
             var boardW = boardH * _cols / _rows;
             if (boardW > maxBoardW) {
@@ -331,36 +405,26 @@ class _TetrisPageState extends State<TetrisPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _statsRow(),
+                  SizedBox(width: c.maxWidth, child: _topBar()),
                   const SizedBox(height: 8),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      SizedBox(
-                        width: boardW,
-                        height: boardH,
-                        child: Stack(
-                          children: [
-                            CustomPaint(
-                              size: Size(boardW, boardH),
-                              painter: _TetrisPainter(
-                                grid: _grid,
-                                cur: _cur,
-                                ghostR: (_started && !_over && _cur != null)
-                                    ? _ghostR()
-                                    : null,
-                              ),
-                            ),
-                            if (!_started || _over) _overlay(),
-                          ],
+                  SizedBox(
+                    width: boardW,
+                    height: boardH,
+                    child: Stack(
+                      children: [
+                        CustomPaint(
+                          size: Size(boardW, boardH),
+                          painter: _TetrisPainter(
+                            grid: _grid,
+                            cur: _cur,
+                            ghostR: (_started && !_over && _cur != null)
+                                ? _ghostR()
+                                : null,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      SizedBox(
-                        width: sideW,
-                        child: _sidePanel(),
-                      ),
-                    ],
+                        if (!_started || _over || _paused) _overlay(),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 14),
                   SizedBox(
@@ -376,16 +440,25 @@ class _TetrisPageState extends State<TetrisPage> {
     );
   }
 
-  Widget _statsRow() {
+  Widget _topBar() {
     return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        _chip('得分', '$_score', const Color(0xFFFFA726)),
-        const SizedBox(width: 6),
-        _chip('最高', '$_best', const Color(0xFFFFD54A)),
-        const SizedBox(width: 6),
-        _chip('等级', '$_level', const Color(0xFF66BB6A)),
-        const SizedBox(width: 6),
-        _chip('行数', '$_lines', const Color(0xFF42A5F5)),
+        Flexible(
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _chip('得分', '$_score', const Color(0xFFFFA726)),
+              _chip('最高', '$_best', const Color(0xFFFFD54A)),
+              _chip('等级', '$_level', const Color(0xFF66BB6A)),
+              _chip('行数', '$_lines', const Color(0xFF42A5F5)),
+            ],
+          ),
+        ),
+        _nextBox(),
       ],
     );
   }
@@ -411,20 +484,16 @@ class _TetrisPageState extends State<TetrisPage> {
     );
   }
 
-  Widget _sidePanel() {
-    return Column(
+  Widget _nextBox() {
+    return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text('NEXT',
-            style: TextStyle(
-                color: Color(0xFF999999),
-                fontSize: 11,
-                letterSpacing: 2,
-                fontWeight: FontWeight.bold)),
-        const SizedBox(height: 6),
+        const Text('下一个',
+            style: TextStyle(color: Color(0xFF999999), fontSize: 11)),
+        const SizedBox(width: 6),
         Container(
-          width: 80,
-          height: 80,
+          width: 54,
+          height: 54,
           decoration: BoxDecoration(
             color: const Color(0xFF1A1A1A),
             borderRadius: BorderRadius.circular(8),
@@ -432,17 +501,41 @@ class _TetrisPageState extends State<TetrisPage> {
           ),
           child: CustomPaint(painter: _NextPainter(_next)),
         ),
-        const SizedBox(height: 16),
-        const Text(
-          '左/右 移动\n下 软降\n上 旋转\n空格 硬降',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: Color(0xFF888888), fontSize: 10, height: 1.5),
-        ),
       ],
     );
   }
 
   Widget _overlay() {
+    if (_paused) {
+      return Positioned.fill(
+        child: Container(
+          color: const Color(0xCC000000),
+          alignment: Alignment.center,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('暂停',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: _togglePause,
+                style: TextButton.styleFrom(
+                  backgroundColor: const Color(0xFFFFA726),
+                ),
+                child: const Text('继续游戏',
+                    style: TextStyle(
+                        color: Color(0xFF222222),
+                        fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    final over = _over;
     return Positioned.fill(
       child: Container(
         color: const Color(0xCC000000),
@@ -451,25 +544,26 @@ class _TetrisPageState extends State<TetrisPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              _over ? '游戏结束' : '俄罗斯方块',
+              over ? '游戏结束' : '俄罗斯方块',
               style: TextStyle(
-                color: _over ? Colors.white : const Color(0xFFFFA726),
+                color: over ? Colors.white : const Color(0xFFFFA726),
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
               ),
             ),
             const SizedBox(height: 10),
-            if (_over)
+            if (over)
               Text('得分 $_score    最高 $_best',
                   style: const TextStyle(color: Colors.white70, fontSize: 13)),
             const SizedBox(height: 16),
             TextButton(
-              onPressed: _over ? _newGame : _start,
+              onPressed: over ? _newGame : _start,
               style: TextButton.styleFrom(
-                backgroundColor:
-                    _over ? const Color(0xFFFFD54A) : const Color(0xFFFFA726),
+                backgroundColor: over
+                    ? const Color(0xFFFFD54A)
+                    : const Color(0xFFFFA726),
               ),
-              child: Text(_over ? '再来一局' : '开始游戏',
+              child: Text(over ? '再来一局' : '开始游戏',
                   style: const TextStyle(
                       color: Color(0xFF222222), fontWeight: FontWeight.bold)),
             ),
@@ -479,59 +573,56 @@ class _TetrisPageState extends State<TetrisPage> {
     );
   }
 
-  // ---- 屏幕控件 ----
+  // ---- 屏幕控件(纯图标,加大)----
   Widget _controlsRow() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        _ctrlBtn(Icons.arrow_left, '左', repeat: () => _moveLR(-1)),
-        _ctrlBtn(Icons.arrow_right, '右', repeat: () => _moveLR(1)),
-        _ctrlBtn(Icons.arrow_downward, '软降', repeat: _softDrop),
-        _ctrlBtn(Icons.rotate_right, '旋转', tap: _rotate),
-        _ctrlBtn(Icons.vertical_align_bottom, '硬降', tap: _hardDrop,
-            primary: true),
+        _ctrlBtn(Icons.arrow_left, repeat: () => _moveLR(-1), tooltip: '左移'),
+        _ctrlBtn(Icons.arrow_right, repeat: () => _moveLR(1), tooltip: '右移'),
+        _ctrlBtn(Icons.arrow_downward, repeat: _softDrop, tooltip: '软降'),
+        _ctrlBtn(Icons.rotate_right, tap: _rotate, tooltip: '旋转'),
+        _ctrlBtn(Icons.vertical_align_bottom,
+            tap: _hardDrop, primary: true, tooltip: '硬降'),
       ],
     );
   }
 
-  Widget _ctrlBtn(IconData icon, String label,
-      {VoidCallback? tap, VoidCallback? repeat, bool primary = false}) {
+  Widget _ctrlBtn(IconData icon,
+      {VoidCallback? tap, VoidCallback? repeat, bool primary = false, String? tooltip}) {
     const color = Color(0xFFFFA726);
+    final size = primary ? 66.0 : 58.0;
     final box = Container(
-      width: primary ? 60 : 52,
-      height: primary ? 60 : 52,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         color: primary ? color : const Color(0xFF262626),
         shape: BoxShape.circle,
         border: Border.all(
             color: color.withValues(alpha: primary ? 1 : 0.6), width: 1.5),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, color: primary ? const Color(0xFF222222) : color, size: 20),
-          Text(label,
-              style: TextStyle(
-                  color: primary ? const Color(0xFF222222) : color,
-                  fontSize: 8,
-                  fontWeight: FontWeight.bold)),
+        boxShadow: const [
+          BoxShadow(color: Color(0x44000000), blurRadius: 5, offset: Offset(0, 2)),
         ],
       ),
+      alignment: Alignment.center,
+      child: Icon(icon,
+          color: primary ? const Color(0xFF222222) : color,
+          size: primary ? 32 : 28),
     );
-    if (repeat != null) {
-      return GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTapDown: (_) => _startRepeat(repeat),
-        onTapUp: (_) => _stopRepeat(),
-        onTapCancel: _stopRepeat,
-        child: box,
-      );
-    }
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: tap,
-      child: box,
-    );
+    final inner = repeat != null
+        ? GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (_) => _startRepeat(repeat),
+            onTapUp: (_) => _stopRepeat(),
+            onTapCancel: _stopRepeat,
+            child: box,
+          )
+        : GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: tap,
+            child: box,
+          );
+    return tooltip == null ? inner : Tooltip(message: tooltip, child: inner);
   }
 }
 
@@ -546,9 +637,7 @@ class _TetrisPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final cw = size.width / _cols;
     final ch = size.height / _rows;
-    // 背景
     canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFF121417));
-    // 网格线
     final linePaint = Paint()
       ..color = const Color(0xFF222733)
       ..strokeWidth = 0.6;
@@ -558,7 +647,6 @@ class _TetrisPainter extends CustomPainter {
     for (int r = 1; r < _rows; r++) {
       canvas.drawLine(Offset(0, r * ch), Offset(size.width, r * ch), linePaint);
     }
-    // 固定方块
     for (int r = 0; r < _rows; r++) {
       for (int c = 0; c < _cols; c++) {
         final v = grid[r][c];
@@ -567,7 +655,6 @@ class _TetrisPainter extends CustomPainter {
         }
       }
     }
-    // 落点预影
     if (cur != null && ghostR != null) {
       final color = _kinds[cur!.kind].color;
       for (final cell in cur!.cells()) {
@@ -578,7 +665,6 @@ class _TetrisPainter extends CustomPainter {
         }
       }
     }
-    // 当前方块
     if (cur != null) {
       final color = _kinds[cur!.kind].color;
       for (final cell in cur!.cells()) {
@@ -597,7 +683,6 @@ class _TetrisPainter extends CustomPainter {
         Rect.fromLTWH(x + 0.8, y + 0.8, w - 1.6, h - 1.6),
         Radius.circular(min(w, h) * 0.16));
     canvas.drawRRect(rr, Paint()..color = color);
-    // 顶部高光
     canvas.drawRRect(
         RRect.fromRectAndRadius(
             Rect.fromLTWH(x + 0.8, y + 0.8, w - 1.6, (h - 1.6) * 0.42),

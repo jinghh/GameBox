@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../games/game2048/game2048_page.dart';
+import '../games/gomoku/gomoku_page.dart';
 import '../games/minesweeper/minesweeper_page.dart';
 import '../games/snake/snake_page.dart';
 import '../games/tank/battle_city_game.dart';
@@ -17,6 +18,8 @@ class GameSpec {
   final String emoji; // 卡片图标，免图片素材
   final Color accent;
   final WidgetBuilder builder;
+  final String? bestKey; // 最高分/最佳成绩的本地 key，null=不显示成绩
+  final bool bestIsTime; // true=通关时间(mm:ss)，false=分数
 
   const GameSpec({
     required this.id,
@@ -25,6 +28,8 @@ class GameSpec {
     required this.emoji,
     required this.accent,
     required this.builder,
+    this.bestKey,
+    this.bestIsTime = false,
   });
 }
 
@@ -41,10 +46,11 @@ final List<GameSpec> kGames = [
   GameSpec(
     id: 'g2048',
     title: '2048',
-    subtitle: '合并数字到 2048',
+    subtitle: '合并到 2048',
     emoji: '🔢',
     accent: const Color(0xFFF2B179),
     builder: (_) => const Game2048Page(),
+    bestKey: 'best_2048',
   ),
   GameSpec(
     id: 'snake',
@@ -53,6 +59,7 @@ final List<GameSpec> kGames = [
     emoji: '🐍',
     accent: const Color(0xFF6EE060),
     builder: (_) => const SnakePage(),
+    bestKey: 'best_snake',
   ),
   GameSpec(
     id: 'mine',
@@ -61,6 +68,8 @@ final List<GameSpec> kGames = [
     emoji: '💣',
     accent: const Color(0xFF4FC3F7),
     builder: (_) => const MinesweeperPage(),
+    bestKey: 'best_mine_easy',
+    bestIsTime: true,
   ),
   GameSpec(
     id: 'tetris',
@@ -69,5 +78,15 @@ final List<GameSpec> kGames = [
     emoji: '🧱',
     accent: const Color(0xFFFFA726),
     builder: (_) => const TetrisPage(),
+    bestKey: 'best_tetris',
+  ),
+  GameSpec(
+    id: 'gomoku',
+    title: '五子棋',
+    subtitle: '人机对战 / 双人对弈',
+    emoji: '⚫',
+    accent: const Color(0xFFE0B040),
+    builder: (_) => const GomokuPage(),
+    bestKey: 'best_gomoku',
   ),
 ];

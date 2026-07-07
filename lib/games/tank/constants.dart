@@ -118,6 +118,27 @@ const int kMaxEnemiesOnField = 4;
 const int kEnemiesPerLevel = 20;
 const int kStartLives = 3;
 
+// ---- Boss 终关:虎二坦克 ----
+const int kBossLevelIndex = 5; // kLevels[5] 为 Boss 终关(第 6 关)
+const double kBossSize = kTank * 3; // 48 世界单位(普通坦克 3 倍体积)
+const int kBossHp = 50;
+const int kBossPhase2Hp = 33; // hp<=33 进入「狂怒」
+const int kBossPhase3Hp = 16; // hp<=16 进入「绝地反击」(扔炸弹 / 临死分裂)
+const double kBossSpeed1 = 40; // 阶段1 移动速度
+const double kBossSpeed2 = 58; // 阶段2
+const double kBossSpeed3 = 70; // 阶段3
+const double kBossFireCd1 = 1.3;
+const double kBossFireCd2 = 0.9;
+const double kBossFireCd3 = 0.55;
+const double kBossBombInterval = 10; // 阶段3 每 10s 向玩家扔一枚炸弹
+const double kBossBombSpeed = 55;
+const double kBossBombRadius = kTank * 1.7; // 炸弹爆炸伤害半径
+const int kBossMiniCount = 3; // 临死分裂为 3 个小 Boss
+const int kBossMiniHp = 3;
+const double kBossMiniSpeed = 72;
+const int kBossKillBonus = 5000; // 击破 Boss 奖励
+const int kBossMiniBonus = 500; // 每个小 Boss
+
 /// cell 坐标 -> 世界坐标（左上角）
 double cellToWorld(int c) => c * kCell;
 

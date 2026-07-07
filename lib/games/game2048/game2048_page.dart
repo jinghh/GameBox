@@ -98,6 +98,7 @@ class _Game2048PageState extends State<Game2048Page> {
     }
     final (moved, gained) = _applyMove(dir);
     if (!moved) return; // 本方向无变化
+    if (gained > 0) HapticFeedback.selectionClick();
     _animating = true;
     setState(() {
       _score += gained;

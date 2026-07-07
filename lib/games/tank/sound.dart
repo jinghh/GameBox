@@ -1,29 +1,28 @@
-// 音效服务:每个音效一个 AudioPool 预加载,重放只走 resume()。
+// 音效服务：每个音效预加载一组 AudioPlayer（默认 ReleaseMode.stop），
+// 播放只走 setVolume + seek(0) + resume，永不重新 setSource。
 //
-// 性能要点(彻底修复"越玩越卡"):
-// 旧实现每次 play(AssetSource) 都会重新 setSource —— 这会重新加载/解码音频,
-// 并在 audioplayers 内部的 _completePrepared 里为"每一次播放"创建一个 Stream
-// 订阅 + 超时 Timer。连发、激战时这些开销不断堆积(且平台线程来不及处理),
-// 表现为"第一关还行,第二关开始越玩越卡"。
+// 为什么不用 audioplayers 的 AudioPool：
+//  AudioPool 在部分 Android 设备（如 HyperOS）上，音效播完的 onCompletion 回调
+//  会触发内部 prepareAsync，偶发 IllegalStateException 直接杀进程（越玩越易触发，
+//  典型表现为「第二局闪退」）。该异常在 native 线程抛出，Dart 层 try-catch 抓不到。
 //
-// 改用 AudioPool 后:
-//  - 每个音效在 init 时一次性 setSource 预加载,之后永不重新加载(无解码、无磁盘);
-//  - 重放只调用 start() -> resume(),不再触发 setSource / _completePrepared,
-//    彻底消除每发子弹的 Stream+Timer 堆积;
-//  - 每个池有 maxPlayers 上限,播放器按需创建、播完归还,数量有界、不会泄漏;
-//  - 同名音效做轻量节流(不影响子弹发射速率),避免极速连发的音频洪流。
+// 自管池用默认 ReleaseMode.stop：播完后 player 保持 loaded、不 reset，
+// 从而避开那条 native 崩溃路径。预加载一次、运行时无 setSource/解码，既不崩也不卡。
 
 import 'package:audioplayers/audioplayers.dart';
 
+import '../../shared/sound_store.dart';
+
 class SoundService {
-  final Map<String, AudioPool> _pools = {};
+  final Map<String, List<AudioPlayer>> _pools = {};
+  final Map<String, int> _cursor = {}; // 轮转游标（支持同名并发）
   final Map<String, double> _vol = {};
   bool muted = false;
   bool _ready = false;
 
   static const String _dir = 'sounds/';
 
-  // 音效定义:文件名 -> (并发池上限, 默认音量)
+  // 音效定义：文件名 -> (并发 player 数, 默认音量)
   static const Map<String, ({int max, double vol})> _defs = {
     'shoot': (max: 2, vol: 0.40),
     'enemy_shoot': (max: 3, vol: 0.18),
@@ -42,55 +41,80 @@ class SoundService {
 
   Future<void> init() async {
     if (_ready) return;
+    final loaded = <String, List<AudioPlayer>>{};
     try {
       for (final e in _defs.entries) {
         final name = e.key;
         final def = e.value;
-        try {
-          final pool = await AudioPool.createFromAsset(
-            path: '$_dir$name.wav',
-            maxPlayers: def.max,
-          );
-          _pools[name] = pool;
+        final list = <AudioPlayer>[];
+        for (int i = 0; i < def.max; i++) {
+          try {
+            final p = AudioPlayer();
+            await p.setReleaseMode(ReleaseMode.stop);
+            await p.setVolume(def.vol);
+            await p.setSource(AssetSource('$_dir$name.wav'));
+            list.add(p);
+          } on Object {
+            // 单个 player 加载失败跳过（不影响其余）
+          }
+        }
+        if (list.isNotEmpty) {
+          loaded[name] = list;
+          _cursor[name] = 0;
           _vol[name] = def.vol;
-        } on Object {
-          // 单个音效加载失败不影响其余音效与游戏运行
         }
       }
-      if (_pools.isNotEmpty) {
-        _watch.start();
-        _ready = true;
-      }
     } on Object {
+      for (final list in loaded.values) {
+        for (final p in list) {
+          try {
+            p.dispose();
+          } on Object {}
+        }
+      }
       _ready = false;
+      return;
+    }
+    if (loaded.isNotEmpty) {
+      _pools.addAll(loaded);
+      _watch.start();
+      _ready = true;
     }
   }
 
   void play(String name, {double? volume}) {
-    if (muted || !_ready) return;
+    if (muted || kMuted.value || !_ready) return;
     final pool = _pools[name];
-    if (pool == null) return;
+    if (pool == null || pool.isEmpty) return;
     final now = _watch.elapsedMilliseconds;
     if (now - (_lastAt[name] ?? -9999) < 60) return; // 同名节流
     _lastAt[name] = now;
-    final vol = volume ?? (_vol[name] ?? 0.5);
-    _start(pool, vol); // 不 await,避免阻塞帧循环
+    final i = (_cursor[name] ?? 0) % pool.length;
+    _cursor[name] = i + 1;
+    _start(pool[i], volume ?? (_vol[name] ?? 0.5)); // 轮转，连发不打断
   }
 
-  Future<void> _start(AudioPool pool, double vol) async {
+  Future<void> _start(AudioPlayer p, double vol) async {
     try {
-      await pool.start(volume: vol);
+      await p.setVolume(vol);
+      await p.seek(Duration.zero);
+      await p.resume();
     } on Object {
-      // 忽略任何音频错误,绝不影响游戏
+      // 忽略任何音频错误，绝不影响游戏
     }
   }
 
   void dispose() {
-    for (final p in _pools.values) {
-      p.dispose(); // 返回 Future,销毁时不阻塞
+    for (final list in _pools.values) {
+      for (final p in list) {
+        try {
+          p.dispose();
+        } on Object {}
+      }
     }
     _pools.clear();
     _vol.clear();
+    _cursor.clear();
     _ready = false;
   }
 }

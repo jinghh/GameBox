@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../app/games.dart';
+import '../shared/best_score_store.dart';
+import '../shared/sound_store.dart';
 
 /// 合集主页：游戏列表网格，由 [kGames] 注册表驱动。
 class HomePage extends StatelessWidget {
@@ -24,6 +26,17 @@ class HomePage extends StatelessWidget {
           ],
         ),
         automaticallyImplyLeading: false,
+        actions: [
+          ValueListenableBuilder<bool>(
+            valueListenable: kMuted,
+            builder: (_, muted, __) => IconButton(
+              tooltip: muted ? '取消静音' : '静音',
+              icon: Icon(muted ? Icons.volume_off : Icons.volume_up,
+                  color: const Color(0xFFFFD54A)),
+              onPressed: SoundStore.toggle,
+            ),
+          ),
+        ],
       ),
       body: GridView.builder(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
@@ -47,8 +60,24 @@ class _GameCard extends StatelessWidget {
   void _open(BuildContext context) =>
       Navigator.of(context).push(MaterialPageRoute<void>(builder: spec.builder));
 
+  /// 副信息行：有成绩显示「🏆 最高/最佳」，无成绩显示 subtitle。
+  (String text, bool hasBest) _subLine() {
+    final key = spec.bestKey;
+    if (key != null && BestScoreStore.has(key)) {
+      final v = BestScoreStore.get(key);
+      if (spec.bestIsTime) {
+        final m = (v ~/ 60).toString().padLeft(2, '0');
+        final s = (v % 60).toString().padLeft(2, '0');
+        return ('🏆 最佳 $m:$s', true);
+      }
+      return ('🏆 最高 $v', true);
+    }
+    return (spec.subtitle, false);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final (sub, hasBest) = _subLine();
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFF1E1E24),
@@ -76,7 +105,6 @@ class _GameCard extends StatelessWidget {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // 图标容器：accent 渐变方块 + 光晕
                   Container(
                     width: 58,
                     height: 58,
@@ -115,12 +143,14 @@ class _GameCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    spec.subtitle,
+                    sub,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFF999999),
+                    style: TextStyle(
+                      color: hasBest ? spec.accent : const Color(0xFF999999),
                       fontSize: 11,
+                      fontWeight:
+                          hasBest ? FontWeight.bold : FontWeight.normal,
                       decoration: TextDecoration.none,
                     ),
                   ),

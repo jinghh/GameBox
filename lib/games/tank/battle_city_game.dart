@@ -51,6 +51,14 @@ class _BattleCityGameState extends State<BattleCityGame>
   int _levelClearStartScore = 0;
   int _levelClearBonus = 0;
 
+  // ---- Boss 终关 ----
+  bool _isBossLevel = false;
+  bool _bossSpawned = false;
+  bool _bossSplit = false;
+  int _bossHpShown = kBossHp; // HUD 显示用(随受击更新)
+  int _miniRemaining = 0;
+  double _victoryT = 0; // 通关结算动画进度
+
   double _freezeTime = 0;
   double _shovelTime = 0;
   double _time = 0;
@@ -133,6 +141,11 @@ class _BattleCityGameState extends State<BattleCityGame>
   void loadLevel(int n, {bool? twoPlayer}) {
     if (twoPlayer != null) _twoPlayer = twoPlayer;
     level = n;
+    _isBossLevel = isBossLevel(n);
+    _bossSpawned = false;
+    _bossSplit = false;
+    _bossHpShown = kBossHp;
+    _miniRemaining = 0;
     final map = kLevels[n % kLevels.length];
     grid = parseTerrain(map);
     _scene.grid = grid;
@@ -155,12 +168,18 @@ class _BattleCityGameState extends State<BattleCityGame>
     }
     _clearArea(kBaseCol, kBaseRow);
 
-    _queue = enemyQueueForLevel(n + 1, _rng);
-    _bonusSet = bonusIndices(_queue);
+    if (_isBossLevel) {
+      _queue = []; // Boss 关不刷普通敌人
+      _bonusSet = {};
+      _spawnTimer = 2.0;
+    } else {
+      _queue = enemyQueueForLevel(n + 1, _rng);
+      _bonusSet = bonusIndices(_queue);
+      _spawnTimer = 1.2;
+    }
     _spawned = 0;
     _killed = 0;
     _spawnCursor = 0;
-    _spawnTimer = 1.2;
 
     applyBaseArmor(false);
 
@@ -220,6 +239,53 @@ class _BattleCityGameState extends State<BattleCityGame>
     _sound.play('start');
   }
 
+  /// 直接跳到指定关卡(选关测试用,单人)。
+  void _jumpToLevel(int lvl) {
+    _twoPlayer = false;
+    score = 0;
+    lives = kStartLives;
+    loadLevel(lvl, twoPlayer: false);
+    phase = Phase.playing;
+    _sound.play('start');
+    setState(() {});
+  }
+
+  void _showLevelSelect() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        backgroundColor: const Color(0xFF1C1C1C),
+        title: const Text('选择关卡',
+            style: TextStyle(color: Color(0xFFFFD54A), fontSize: 18)),
+        children: [
+          for (int i = 0; i < kLevels.length; i++)
+            SimpleDialogOption(
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                _jumpToLevel(i);
+              },
+              child: Row(
+                children: [
+                  Icon(isBossLevel(i) ? Icons.whatshot : Icons.map,
+                      color: isBossLevel(i)
+                          ? const Color(0xFFFF7043)
+                          : const Color(0xFFCCCCCC),
+                      size: 18),
+                  const SizedBox(width: 10),
+                  Text(
+                    isBossLevel(i)
+                        ? '${kLevels[i].name}  👑 Boss'
+                        : kLevels[i].name,
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   // ---- 帧循环 ----
   void _onTick(Duration elapsed) {
     double dt = 0;
@@ -247,7 +313,9 @@ class _BattleCityGameState extends State<BattleCityGame>
       case Phase.start:
       case Phase.paused:
       case Phase.gameOver:
+        break;
       case Phase.victory:
+        _victoryT += dt;
         break;
     }
     if (!mounted) return;
@@ -297,6 +365,9 @@ class _BattleCityGameState extends State<BattleCityGame>
       _twoPlayer ? 1 : 0,
       p0,
       p1,
+      _isBossLevel ? 1 : 0,
+      _bossHpShown,
+      _miniRemaining,
     );
   }
 
@@ -308,8 +379,10 @@ class _BattleCityGameState extends State<BattleCityGame>
   }
 
   void _advanceLevel() {
+    HapticFeedback.mediumImpact(); // 过关 / 通关
     if (level + 1 >= kLevels.length) {
       phase = Phase.victory;
+      _victoryT = 0;
       _sound.play('start');
     } else {
       loadLevel(level + 1);
@@ -411,17 +484,18 @@ class _BattleCityGameState extends State<BattleCityGame>
 
   // ---- 坦克移动 ----
   void _tryMoveTank(Tank t, Dir d, double dist) {
+    final sz = t.size;
     if (d != t.dir) {
       t.dir = d;
       final snapped = d.isHorizontal
           ? Offset(t.pos.dx, snapToCell(t.pos.dy))
           : Offset(snapToCell(t.pos.dx), t.pos.dy);
-      if (!_tankBlocked(Rect.fromLTWH(snapped.dx, snapped.dy, kTank, kTank), t)) {
+      if (!_tankBlocked(Rect.fromLTWH(snapped.dx, snapped.dy, sz, sz), t)) {
         t.pos = snapped;
       }
     }
     final np = t.pos + d.vector * dist;
-    if (!_tankBlocked(Rect.fromLTWH(np.dx, np.dy, kTank, kTank), t)) {
+    if (!_tankBlocked(Rect.fromLTWH(np.dx, np.dy, sz, sz), t)) {
       t.pos = np;
     }
   }
@@ -440,16 +514,15 @@ class _BattleCityGameState extends State<BattleCityGame>
         if (grid[y][x].blocksTank) return true;
       }
     }
-    // 玩家之间互相阻挡；敌方也会被任意玩家阻挡
+    // 所有坦克互相阻挡（玩家之间、敌坦之间、玩家与敌坦），避免重合
     for (final q in players) {
       if (!identical(q, self) && q.alive && !q.spawning && q.rect.overlaps(r)) {
         return true;
       }
     }
-    // 玩家还会被敌方阻挡（敌方之间不互挡，保持原版）
-    if (self.isPlayer) {
-      for (final e in enemies) {
-        if (e.alive && !e.spawning && e.rect.overlaps(r)) return true;
+    for (final e in enemies) {
+      if (!identical(e, self) && e.alive && !e.spawning && e.rect.overlaps(r)) {
+        return true;
       }
     }
     return false;
@@ -489,6 +562,13 @@ class _BattleCityGameState extends State<BattleCityGame>
 
   // ---- 敌人出生 ----
   void _updateSpawning(double dt) {
+    if (_isBossLevel) {
+      if (_bossSpawned) return;
+      _spawnTimer -= dt;
+      if (_spawnTimer > 0) return;
+      _spawnBoss();
+      return;
+    }
     if (_spawned >= _queue.length) return;
     if (enemies.where((e) => !e.spawning).length >= kMaxEnemiesOnField) return;
     _spawnTimer -= dt;
@@ -534,6 +614,37 @@ class _BattleCityGameState extends State<BattleCityGame>
     _spawnTimer = 1.8;
   }
 
+  // ---- Boss 出生 ----
+  void _spawnBoss() {
+    // 顶部居中清出 6×6 cell 的 Boss 出生区
+    final bossCol = (kCells ~/ 2) - 3; // 10
+    for (int y = 0; y < 6; y++) {
+      for (int x = bossCol; x < bossCol + 6; x++) {
+        if (y < kCells && x >= 0 && x < kCells) grid[y][x] = Terrain.empty;
+      }
+    }
+    _bumpTerrain();
+    final boss = Tank(
+      pos: Offset(cellToWorld(bossCol), 0),
+      dir: Dir.down,
+      isPlayer: false,
+      speed: kBossSpeed1,
+      size: kBossSize,
+    )
+      ..isBoss = true
+      ..hp = kBossHp
+      ..spawning = true
+      ..spawnAnim = 0
+      ..fireCooldown = 1.6
+      ..bombTimer = kBossBombInterval
+      ..aiTimer = 0.4;
+    enemies.add(boss);
+    _bossSpawned = true;
+    _bossSplit = false;
+    _bossHpShown = kBossHp;
+    _sound.play('start');
+  }
+
   // ---- 敌人 AI ----
   void _updateEnemy(Tank e, double dt, bool frozen) {
     if (!e.alive) return; // 已击毁：本帧起不再行动（update 末尾统一移除）
@@ -544,7 +655,17 @@ class _BattleCityGameState extends State<BattleCityGame>
     }
     e.shieldTime = max(0, e.shieldTime - dt);
     e.fireCooldown = max(0, e.fireCooldown - dt);
+    e.hitFlashTime = max(0, e.hitFlashTime - dt);
     if (frozen) return;
+
+    if (e.isBoss) {
+      _updateBoss(e, dt);
+      return;
+    }
+    if (e.isMiniBoss) {
+      _updateMini(e, dt);
+      return;
+    }
 
     e.aiTimer -= dt;
     if (e.aiTimer <= 0) {
@@ -595,6 +716,136 @@ class _BattleCityGameState extends State<BattleCityGame>
     return opts[_rng.nextInt(opts.length)];
   }
 
+  // ======================== Boss:虎二坦克 ========================
+  /// Boss 阶段(1 常规 / 2 狂怒 / 3 绝地反击),按血量划分。
+  int _bossPhase(Tank e) {
+    if (e.hp <= kBossPhase3Hp) return 3;
+    if (e.hp <= kBossPhase2Hp) return 2;
+    return 1;
+  }
+
+  void _updateBoss(Tank e, double dt) {
+    final phase = _bossPhase(e);
+    e.speed = phase == 1 ? kBossSpeed1 : (phase == 2 ? kBossSpeed2 : kBossSpeed3);
+
+    e.aiTimer -= dt;
+    if (e.aiTimer <= 0) {
+      e.dir = _dirToward(e.center, _bossTarget(e));
+      e.aiTimer = 0.5 + _rng.nextDouble() * 0.8;
+    }
+    final before = e.pos.dx + e.pos.dy;
+    _tryMoveTank(e, e.dir, e.speed * dt);
+    if (((e.pos.dx + e.pos.dy) - before).abs() < 0.01) {
+      // 受阻:改走垂直方向
+      e.dir = e.dir.isHorizontal
+          ? (_rng.nextBool() ? Dir.up : Dir.down)
+          : (_rng.nextBool() ? Dir.left : Dir.right);
+      e.aiTimer = 0.3 + _rng.nextDouble() * 0.5;
+    }
+
+    if (e.fireCooldown <= 0) {
+      _fireBoss(e, phase);
+      e.fireCooldown = phase == 1
+          ? kBossFireCd1
+          : (phase == 2 ? kBossFireCd2 : kBossFireCd3);
+    }
+
+    // 阶段3:每 10s 向玩家扔一枚炸弹
+    if (phase >= 3) {
+      e.bombTimer -= dt;
+      if (e.bombTimer <= 0) {
+        _bossBomb(e);
+        e.bombTimer = kBossBombInterval;
+      }
+    }
+  }
+
+  /// 炸弹/追击目标:最近玩家;无玩家存活时瞄准基地。
+  Offset _bossTarget(Tank e) {
+    final p = _nearestPlayer(e);
+    if (p != null) return p.center;
+    return baseRect.center;
+  }
+
+  /// 四向中更接近目标的方向。
+  Dir _dirToward(Offset from, Offset to) {
+    final dx = to.dx - from.dx;
+    final dy = to.dy - from.dy;
+    if (dx.abs() > dy.abs()) return dx > 0 ? Dir.right : Dir.left;
+    return dy > 0 ? Dir.down : Dir.up;
+  }
+
+  /// 双管开火:阶段1 单发,阶段2/3 双发(炮筒左右各一)。
+  void _fireBoss(Tank e, int phase) {
+    final count = phase >= 2 ? 2 : 1;
+    final perp = Offset(-e.dir.vector.dy, e.dir.vector.dx);
+    final half = e.size / 2;
+    for (int i = 0; i < count; i++) {
+      final off = count == 1 ? 0.0 : (i == 0 ? -e.size / 4 : e.size / 4);
+      final muzzle = e.center + e.dir.vector * half + perp * off;
+      bullets.add(Bullet(
+        pos: muzzle - const Offset(kBullet / 2, kBullet / 2),
+        dir: e.dir,
+        fromPlayer: false,
+        speed: kBulletSpeedFast,
+      ));
+    }
+    _sound.play('enemy_shoot', volume: 0.28);
+  }
+
+  void _bossBomb(Tank e) {
+    final d = _dirToward(e.center, _bossTarget(e));
+    final muzzle = e.center + e.dir.vector * (e.size / 2);
+    bullets.add(Bullet(
+      pos: muzzle - const Offset(kBullet / 2, kBullet / 2),
+      dir: d,
+      fromPlayer: false,
+      speed: kBossBombSpeed,
+      isBomb: true,
+    ));
+    _sound.play('big_explosion', volume: 0.35);
+    HapticFeedback.mediumImpact();
+  }
+
+  // ---- 小Boss(分裂体):高速 + 三连发 ----
+  void _updateMini(Tank e, double dt) {
+    e.aiTimer -= dt;
+    if (e.aiTimer <= 0) {
+      final p = _nearestPlayer(e);
+      if (p != null && _rng.nextDouble() < 0.6) {
+        e.dir = _dirToward(e.center, p.center);
+      } else {
+        const opts = [Dir.down, Dir.left, Dir.right, Dir.up];
+        e.dir = opts[_rng.nextInt(opts.length)];
+      }
+      e.aiTimer = 0.4 + _rng.nextDouble() * 0.7;
+    }
+    final before = e.pos.dx + e.pos.dy;
+    _tryMoveTank(e, e.dir, e.speed * dt);
+    if (((e.pos.dx + e.pos.dy) - before).abs() < 0.01) e.aiTimer = 0;
+
+    if (e.fireCooldown <= 0) {
+      _fireMini(e);
+      e.fireCooldown = kEnemyFireCooldown * 0.7;
+    }
+  }
+
+  /// 三连发:沿主向并排射出三发(近似扇形弹幕)。
+  void _fireMini(Tank e) {
+    final perp = Offset(-e.dir.vector.dy, e.dir.vector.dx);
+    const offs = [-6.0, 0.0, 6.0];
+    for (final off in offs) {
+      final muzzle = e.center + e.dir.vector * (e.size / 2) + perp * off;
+      bullets.add(Bullet(
+        pos: muzzle - const Offset(kBullet / 2, kBullet / 2),
+        dir: e.dir,
+        fromPlayer: false,
+        speed: kBulletSpeedFast,
+      ));
+    }
+    _sound.play('enemy_shoot', volume: 0.22);
+  }
+
   // ---- 子弹 ----
   void _updateBullets(double dt) {
     for (final b in bullets) {
@@ -602,22 +853,20 @@ class _BattleCityGameState extends State<BattleCityGame>
       b.pos = b.pos + b.dir.vector * b.speed * dt;
       final r = b.rect;
 
+      // Boss 炸弹:范围爆炸,不参与常规子弹碰撞
+      if (b.isBomb) {
+        _stepBomb(b, r);
+        continue;
+      }
+
       if (r.left < 0 || r.top < 0 || r.right > kBattle || r.bottom > kBattle) {
         b.dead = true;
         explosions.add(Explosion(b.center, life: 0.18, size: kCell));
         continue;
       }
       if (baseAlive && r.overlaps(baseRect)) {
-        baseAlive = false;
-        _scene.baseAlive = false; // 同步给地形层，确保基地被毁画面即时更新
-        _bumpTerrain();
+        _destroyBase();
         b.dead = true;
-        explosions.add(
-            Explosion(baseRect.center, life: 0.5, size: kTank * 2, big: true));
-        _sound.play('big_explosion');
-        HapticFeedback.heavyImpact();
-        phase = Phase.gameOver;
-        _sound.play('gameover');
         continue;
       }
       bool hitWall = false;
@@ -686,8 +935,107 @@ class _BattleCityGameState extends State<BattleCityGame>
     bullets.removeWhere((b) => b.dead);
   }
 
+  /// 基地被毁 → 游戏结束(普通子弹与 Boss 炸弹共用)。
+  void _destroyBase() {
+    if (!baseAlive) return;
+    baseAlive = false;
+    _scene.baseAlive = false; // 同步给地形层,确保基地被毁画面即时更新
+    _bumpTerrain();
+    explosions
+        .add(Explosion(baseRect.center, life: 0.5, size: kTank * 2, big: true));
+    _sound.play('big_explosion');
+    HapticFeedback.heavyImpact();
+    phase = Phase.gameOver;
+    _sound.play('gameover');
+  }
+
+  /// Boss 炸弹飞行:命中墙/基地/玩家 或出界 → 范围爆炸。
+  void _stepBomb(Bullet b, Rect r) {
+    if (r.left < 0 || r.top < 0 || r.right > kBattle || r.bottom > kBattle) {
+      _explodeBomb(b.center);
+      b.dead = true;
+      return;
+    }
+    if (baseAlive && r.overlaps(baseRect)) {
+      _destroyBase();
+      _explodeBomb(baseRect.center);
+      b.dead = true;
+      return;
+    }
+    final x0 = worldToCell(r.left), x1 = worldToCell(r.right - 0.001);
+    final y0 = worldToCell(r.top), y1 = worldToCell(r.bottom - 0.001);
+    for (int y = y0; y <= y1; y++) {
+      for (int x = x0; x <= x1; x++) {
+        if (y < 0 || y >= kCells || x < 0 || x >= kCells) continue;
+        final t = grid[y][x];
+        if (t == Terrain.brick || t == Terrain.steel) {
+          _explodeBomb(b.center);
+          b.dead = true;
+          return;
+        }
+      }
+    }
+    for (final p in players) {
+      if (p.alive && p.rect.overlaps(r)) {
+        _explodeBomb(b.center);
+        b.dead = true;
+        return;
+      }
+    }
+  }
+
+  /// 炸弹范围爆炸:大爆炸特效 + 摧毁半径内砖墙 + 范围内玩家受损。
+  void _explodeBomb(Offset ctr) {
+    final rad = kBossBombRadius;
+    final area = Rect.fromCenter(center: ctr, width: rad * 2, height: rad * 2);
+    explosions.add(Explosion(ctr, life: 0.45, size: rad * 1.5, big: true));
+    _sound.play('big_explosion', volume: 0.6);
+    HapticFeedback.heavyImpact();
+    final x0 = max(0, worldToCell(area.left));
+    final x1 = min(kCells - 1, worldToCell(area.right - 0.001));
+    final y0 = max(0, worldToCell(area.top));
+    final y1 = min(kCells - 1, worldToCell(area.bottom - 0.001));
+    for (int y = y0; y <= y1; y++) {
+      for (int x = x0; x <= x1; x++) {
+        if (grid[y][x] == Terrain.brick) grid[y][x] = Terrain.empty;
+      }
+    }
+    _bumpTerrain();
+    for (final p in players.toList()) {
+      if (p.alive) {
+        final pr =
+            Rect.fromCenter(center: p.center, width: kTank, height: kTank);
+        if (pr.overlaps(area)) _hitPlayer(p);
+      }
+    }
+  }
+
   void _hitEnemy(Tank e) {
-    if (e.kind == EnemyKind.armor) {
+    if (e.isBoss) {
+      e.hp--;
+      e.hitFlashTime = 0.12;
+      _bossHpShown = e.hp > 0 ? e.hp : 0;
+      if (e.hp > 0) {
+        explosions.add(Explosion(e.center, life: 0.14, size: kCell));
+        _sound.play('hit', volume: 0.3);
+        return;
+      }
+      // hp 归零:分裂为 3 个小 Boss(仅一次)
+      if (!_bossSplit) {
+        _bossSplit = true;
+        _splitBoss(e);
+      }
+      return;
+    }
+    if (e.isMiniBoss) {
+      e.hp--;
+      e.hitFlashTime = 0.1;
+      if (e.hp > 0) {
+        explosions.add(Explosion(e.center, life: 0.14, size: kCell));
+        _sound.play('hit', volume: 0.3);
+        return;
+      }
+    } else if (e.kind == EnemyKind.armor) {
       e.armorHp--;
       if (e.armorHp > 0) {
         explosions.add(Explosion(e.center, life: 0.14, size: kCell));
@@ -697,11 +1045,43 @@ class _BattleCityGameState extends State<BattleCityGame>
     }
     e.alive = false;
     _killed++;
-    score += scoreForKind(e.kind!);
+    score += e.isMiniBoss
+        ? kBossMiniBonus
+        : (e.kind != null ? scoreForKind(e.kind!) : 0);
+    if (e.isMiniBoss) _miniRemaining = max(0, _miniRemaining - 1);
     explosions.add(Explosion(e.center, life: 0.4, size: kTank * 1.4, big: true));
     _sound.play('explosion', volume: 0.5);
     HapticFeedback.mediumImpact();
     if (e.bonus) _spawnPowerUp();
+  }
+
+  /// Boss 临死分裂:本体消失,生成 3 个小 Boss,奖励大分。
+  void _splitBoss(Tank e) {
+    final ctr = e.center;
+    explosions.add(Explosion(ctr, life: 0.6, size: kBossSize, big: true));
+    _sound.play('big_explosion');
+    HapticFeedback.heavyImpact();
+    e.alive = false;
+    score += kBossKillBonus;
+    _miniRemaining = kBossMiniCount;
+    const offs = <double>[-kTank * 1.3, 0.0, kTank * 1.3];
+    for (final ox in offs) {
+      final pos = Offset(
+        (ctr.dx + ox).clamp(0.0, kBattle - kTank),
+        ctr.dy.clamp(0.0, kBattle - kTank),
+      );
+      enemies.add(Tank(
+        pos: pos,
+        dir: Dir.down,
+        isPlayer: false,
+        speed: kBossMiniSpeed,
+      )
+        ..isMiniBoss = true
+        ..hp = kBossMiniHp
+        ..spawning = true
+        ..spawnAnim = 0
+        ..fireCooldown = 0.6);
+    }
   }
 
   void _hitPlayer(Tank p) {
@@ -736,6 +1116,20 @@ class _BattleCityGameState extends State<BattleCityGame>
   }
 
   void _checkProgress() {
+    if (_isBossLevel) {
+      if (!_bossSpawned) return;
+      final bossAlive = enemies.any((e) => e.isBoss && e.alive);
+      final miniAlive = enemies.any((e) => e.isMiniBoss && e.alive);
+      if (!bossAlive && !miniAlive) {
+        _levelClearStartScore = score;
+        _levelClearBonus = _computeLevelBonus();
+        score += _levelClearBonus;
+        phase = Phase.levelClear;
+        _levelClearTimer = kLevelClearDuration;
+        _sound.play('powerup');
+      }
+      return;
+    }
     if (_spawned >= _queue.length && enemies.isEmpty) {
       _levelClearStartScore = score;
       _levelClearBonus = _computeLevelBonus();
@@ -1011,7 +1405,7 @@ class _BattleCityGameState extends State<BattleCityGame>
           const Spacer(),
           _livesIndicator(),
           const SizedBox(width: 8),
-          _enemyCounter(remaining),
+          if (_isBossLevel) _bossHud() else _enemyCounter(remaining),
           const SizedBox(width: 6),
           _iconButton(
             _sound.muted ? Icons.volume_off : Icons.volume_up,
@@ -1101,6 +1495,31 @@ class _BattleCityGameState extends State<BattleCityGame>
     );
   }
 
+  /// Boss 关 HUD:显示 Boss 血量,分裂后显示剩余分裂体数。
+  Widget _bossHud() {
+    Tank? boss;
+    for (final e in enemies) {
+      if (e.isBoss && e.alive) {
+        boss = e;
+        break;
+      }
+    }
+    final txt = boss != null ? 'HP ${boss.hp}' : '分裂体 ×$_miniRemaining';
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.whatshot, color: Color(0xFFFF7043), size: 14),
+        const SizedBox(width: 3),
+        Text(txt,
+            style: const TextStyle(
+                color: Color(0xFFFF7043),
+                fontWeight: FontWeight.bold,
+                fontFamily: 'monospace',
+                fontSize: 13)),
+      ],
+    );
+  }
+
   Widget _iconButton(IconData icon, VoidCallback onTap) {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -1176,7 +1595,8 @@ class _BattleCityGameState extends State<BattleCityGame>
     if (phase == Phase.start) return _buildStartMenu();
     if (phase == Phase.levelClear) return _buildLevelClear();
     if (phase == Phase.paused) return _buildPausePanel();
-    // gameOver / victory
+    if (phase == Phase.victory) return _buildVictory();
+    // gameOver
     String title;
     String subtitle = '';
     String action = '';
@@ -1187,12 +1607,6 @@ class _BattleCityGameState extends State<BattleCityGame>
         subtitle = '最终得分：$score';
         action = '点击屏幕重新开始';
         color = const Color(0xFFFF5252);
-        break;
-      case Phase.victory:
-        title = '全境通关！';
-        subtitle = '最终得分：$score';
-        action = '点击屏幕再来一次';
-        color = const Color(0xFFFFD54A);
         break;
       default:
         return const SizedBox.shrink();
@@ -1244,6 +1658,98 @@ class _BattleCityGameState extends State<BattleCityGame>
                           decoration: TextDecoration.none)),
                 ],
               ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---- 通关结算面板(击败 Boss 虎二后)----
+  Widget _buildVictory() {
+    final p = (_victoryT / 3.0).clamp(0.0, 1.0);
+    final titleT = (p / 0.2).clamp(0.0, 1.0);
+    final scale = _easeOutBack(titleT);
+    final countT = (p / 0.6).clamp(0.0, 1.0);
+    final shown = (score * _easeOutCubic(countT)).round();
+    final nextOp = ((p - 0.7) / 0.2).clamp(0.0, 1.0);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _onPrimaryTap,
+      child: Container(
+        decoration: const BoxDecoration(
+          gradient: RadialGradient(
+            center: Alignment.center,
+            radius: 0.9,
+            colors: [Color(0xFF2E2300), Color(0xDD000000)],
+          ),
+        ),
+        child: Stack(
+          children: [
+            Positioned.fill(child: CustomPaint(painter: _SparklePainter(_time))),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Transform.scale(
+                      scale: 0.6 + scale * 0.4,
+                      child: const Text('🏆 全境通关！',
+                          style: TextStyle(
+                              color: Color(0xFFFFD54A),
+                              fontSize: 30,
+                              fontWeight: FontWeight.bold,
+                              fontFamily: 'monospace',
+                              letterSpacing: 2,
+                              shadows: [
+                                Shadow(color: Color(0xCCFFD54A), blurRadius: 20)
+                              ],
+                              decoration: TextDecoration.none)),
+                    ),
+                    const SizedBox(height: 6),
+                    Opacity(
+                      opacity: titleT,
+                      child: const Text('虎二已被击败',
+                          style: TextStyle(
+                              color: Color(0xFFCCCCCC),
+                              fontSize: 13,
+                              fontFamily: 'monospace',
+                              decoration: TextDecoration.none)),
+                    ),
+                    const SizedBox(height: 20),
+                    _rewardLine('击毁坦克', '×$_killed', p, 0.16),
+                    _rewardLine('终关击破 Boss', '+$kBossKillBonus', p, 0.28),
+                    if (baseAlive) _rewardLine('基地完好', '+500', p, 0.40),
+                    if (lives > 0)
+                      _rewardLine('剩余生命 ×$lives', '+${lives * 200}', p, 0.52),
+                    const SizedBox(height: 16),
+                    const Text('最终得分',
+                        style: TextStyle(
+                            color: Color(0xFF888888),
+                            fontSize: 10,
+                            decoration: TextDecoration.none)),
+                    const SizedBox(height: 2),
+                    Text('$shown',
+                        style: const TextStyle(
+                            color: Color(0xFFFFE082),
+                            fontSize: 32,
+                            fontWeight: FontWeight.bold,
+                            fontFamily: 'monospace',
+                            decoration: TextDecoration.none)),
+                    const SizedBox(height: 22),
+                    Opacity(
+                      opacity: nextOp,
+                      child: const Text('点击屏幕再来一次',
+                          style: TextStyle(
+                              color: Color(0xFFA3E635),
+                              fontSize: 12,
+                              fontFamily: 'monospace',
+                              decoration: TextDecoration.none)),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
@@ -1351,6 +1857,8 @@ class _BattleCityGameState extends State<BattleCityGame>
                   height: 1.6,
                   decoration: TextDecoration.none)),
           const SizedBox(height: 22),
+          _overlayButton('选关(测试)', Icons.map, _showLevelSelect),
+          const SizedBox(height: 12),
           _overlayButton('返回游戏列表', Icons.home, () {
             Navigator.of(context).pop();
           }),

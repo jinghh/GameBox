@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../shared/best_score_store.dart';
 import '../../shared/game_shell.dart';
@@ -143,6 +144,7 @@ class _MinesweeperPageState extends State<MinesweeperPage> {
       _startTimer();
     }
     if (cell.mine) {
+      HapticFeedback.heavyImpact();
       setState(() {
         for (final c in _cells) {
           if (c.mine) c.revealed = true;
@@ -177,6 +179,7 @@ class _MinesweeperPageState extends State<MinesweeperPage> {
     final total = _conf.rows * _conf.cols;
     if (_revealed == total - _conf.mines) {
       _won = true;
+      HapticFeedback.mediumImpact();
       _stopTimer();
       for (final c in _cells) {
         if (c.mine && !c.flagged) {

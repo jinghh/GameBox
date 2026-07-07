@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'app/theme.dart';
 import 'home/home_page.dart';
 import 'shared/best_score_store.dart';
+import 'shared/sound_store.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,6 +16,7 @@ void main() async {
   ]);
   // 预热本地存储（最高分持久化），在各游戏页读取前就绪
   await BestScoreStore.ensureLoaded();
+  await SoundStore.load(); // 全局静音开关
   runApp(const MiniGamesApp());
 }
 

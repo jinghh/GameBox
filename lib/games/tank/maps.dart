@@ -92,7 +92,26 @@ final List<LevelMap> kLevels = [
     ' B B B B B B ',
     '             ',
   ]),
+  // Boss 终关:开阔竞技场(顶部为 Boss 出生区,留出 6 格宽通道供其推进)
+  LevelMap('关卡 6 · 虎二降临', [
+    '             ',
+    '             ',
+    '  B   S   B  ',
+    '             ',
+    '   B B B B   ',
+    '             ',
+    ' B    T    B ',
+    '             ',
+    ' B    T    B ',
+    '             ',
+    '   B B B B   ',
+    '  B   S   B  ',
+    '             ',
+  ]),
 ];
+
+/// 该关卡是否为 Boss 终关。
+bool isBossLevel(int n) => n == kBossLevelIndex;
 
 /// 把整砖地图解析为 26x26 半格地形
 List<List<Terrain>> parseTerrain(LevelMap map) {

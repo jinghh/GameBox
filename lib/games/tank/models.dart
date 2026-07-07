@@ -24,6 +24,14 @@ class Tank {
   bool spawning = true; // 出生动画
   double spawnAnim = 0;
 
+  // ---- Boss 终关:虎二坦克及其分裂体 ----
+  double size; // 边长(世界单位):普通=kTank,Boss=3x
+  bool isBoss = false;
+  bool isMiniBoss = false;
+  int hp = 1; // Boss=50 / 小Boss=3(其它种类忽略)
+  double bombTimer = 0; // Boss 阶段3 扔炸弹倒计时
+  double hitFlashTime = 0; // 受击闪烁剩余时间(秒)
+
   Tank({
     required this.pos,
     required this.dir,
@@ -32,13 +40,14 @@ class Tank {
     required this.speed,
     this.bonus = false,
     this.player = 0,
+    this.size = kTank,
   }) : aiDir = dir {
     if (kind == EnemyKind.armor) armorHp = 4;
     if (isPlayer) shieldTime = kPlayerShieldStart;
   }
 
-  Rect get rect => Rect.fromLTWH(pos.dx, pos.dy, kTank, kTank);
-  Offset get center => Offset(pos.dx + kTank / 2, pos.dy + kTank / 2);
+  Rect get rect => Rect.fromLTWH(pos.dx, pos.dy, size, size);
+  Offset get center => Offset(pos.dx + size / 2, pos.dy + size / 2);
 }
 
 class Bullet {
@@ -49,6 +58,7 @@ class Bullet {
   double speed;
   bool dead = false;
   final int power; // >=3 可破钢
+  bool isBomb = false; // Boss 炸弹:落地范围爆炸
 
   Bullet({
     required this.pos,
@@ -57,6 +67,7 @@ class Bullet {
     required this.speed,
     this.power = 0,
     this.owner,
+    this.isBomb = false,
   });
 
   Rect get rect => Rect.fromLTWH(pos.dx, pos.dy, kBullet, kBullet);
