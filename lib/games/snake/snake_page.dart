@@ -1,4 +1,4 @@
-// 贪吃蛇 —— 横屏。全屏滑动转向(移动端原生操控),关卡制:吃够目标数量即过关,
+// 贪吃蛇 —— 横屏全屏。坦克同款虚拟摇杆(半透明悬浮),关卡制:吃够目标数量即过关,
 // 过关后蛇身长度保留,新增障碍物 + 提速增加难度。初始较慢,逐级加快。
 // 撞墙 / 撞身 / 撞障碍判负。纯单机;最高分本地保存。CustomPainter 渲染。
 
@@ -9,7 +9,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../shared/best_score_store.dart';
-import '../../shared/game_shell.dart';
 import '../../shared/swipe_detector.dart';
 
 class SnakePage extends StatefulWidget {
@@ -19,7 +18,6 @@ class SnakePage extends StatefulWidget {
 }
 
 class _SnakePageState extends State<SnakePage> {
-  // 横屏网格:宽 > 高。逻辑格与像素格都按 cols/rows 比例缩放,保证每格是正方形。
   static const int _cols = 29, _rows = 11;
   List<Point<int>> _snake = [];
   Point<int> _food = const Point(0, 0);
@@ -28,23 +26,21 @@ class _SnakePageState extends State<SnakePage> {
   SwipeDir? _nextDir;
   int _score = 0, _best = 0;
   int _level = 1;
-  int _levelEaten = 0; // 当前关已吃数量
-  int get _levelTarget => 4 + _level; // 过关所需(随关卡缓增)
+  int _levelEaten = 0;
+  int get _levelTarget => 4 + _level;
   bool _over = false, _started = false, _paused = false, _leveling = false;
   Timer? _timer;
-  Timer? _clock; // 游玩计时(秒)
-  Timer? _levelTimer; // 过关横幅展示计时
+  Timer? _clock;
+  Timer? _levelTimer;
   int _elapsed = 0;
-  double _eatAnim = 0; // 张嘴吃食物动画(0..1,逐 tick 衰减)
+  double _eatAnim = 0;
   final Random _rng = Random();
-  final FocusNode _focus = FocusNode();
 
   static const String _bestKey = 'best_snake';
 
   @override
   void initState() {
     super.initState();
-    // 进页面锁横屏,退出时在 dispose 恢复竖屏
     SystemChrome.setPreferredOrientations(<DeviceOrientation>[
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
@@ -58,16 +54,13 @@ class _SnakePageState extends State<SnakePage> {
     _timer?.cancel();
     _clock?.cancel();
     _levelTimer?.cancel();
-    _focus.dispose();
     SystemChrome.setPreferredOrientations(<DeviceOrientation>[
       DeviceOrientation.portraitUp,
     ]);
     super.dispose();
   }
 
-  /// 当前速度(ms/步):初始 240(较慢),每关 -16,关卡内每吃一个 -4,下限 85。
-  int get _speedMs =>
-      max(85, (240 - (_level - 1) * 16) - _levelEaten * 4);
+  int get _speedMs => max(85, (240 - (_level - 1) * 16) - _levelEaten * 4);
 
   void _reset() {
     _timer?.cancel();
@@ -76,11 +69,7 @@ class _SnakePageState extends State<SnakePage> {
     _clock = null;
     _levelTimer?.cancel();
     _levelTimer = null;
-    _snake = [
-      const Point(14, 5),
-      const Point(13, 5),
-      const Point(12, 5),
-    ];
+    _snake = [const Point(14, 5), const Point(13, 5), const Point(12, 5)];
     _dir = SwipeDir.right;
     _nextDir = null;
     _score = 0;
@@ -142,7 +131,6 @@ class _SnakePageState extends State<SnakePage> {
     _food = p;
   }
 
-  /// 按 _level 生成障碍物(数量随关卡累计上升),避开蛇身 / 食物 / 蛇头正前方一格。
   void _regenObstacles() {
     _obstacles.clear();
     final want = min((_level - 1) * 3, (_cols * _rows) ~/ 6);
@@ -163,7 +151,6 @@ class _SnakePageState extends State<SnakePage> {
 
   void _setDir(SwipeDir d) {
     if (_over || _paused || _leveling) return;
-    // 禁止 180° 反向
     if (_isOpposite(d, _dir)) return;
     _nextDir = d;
     if (!_started) _start();
@@ -223,7 +210,7 @@ class _SnakePageState extends State<SnakePage> {
           _levelUp();
         } else {
           _placeFood();
-          _armTimer(); // 每吃一个略提速
+          _armTimer();
         }
       } else {
         _snake.removeLast();
@@ -231,7 +218,6 @@ class _SnakePageState extends State<SnakePage> {
     });
   }
 
-  /// 过关:蛇身长度保留,障碍增加,提速,展示 1.5s 过关横幅后自动继续。
   void _levelUp() {
     _timer?.cancel();
     _timer = null;
@@ -267,95 +253,90 @@ class _SnakePageState extends State<SnakePage> {
     });
   }
 
-  KeyEventResult _onKey(FocusNode node, KeyEvent e) {
-    if (e is! KeyDownEvent) return KeyEventResult.ignored;
-    final k = e.logicalKey;
-    if (k == LogicalKeyboardKey.arrowUp || k == LogicalKeyboardKey.keyW) {
-      _setDir(SwipeDir.up);
-      return KeyEventResult.handled;
-    }
-    if (k == LogicalKeyboardKey.arrowDown || k == LogicalKeyboardKey.keyS) {
-      _setDir(SwipeDir.down);
-      return KeyEventResult.handled;
-    }
-    if (k == LogicalKeyboardKey.arrowLeft || k == LogicalKeyboardKey.keyA) {
-      _setDir(SwipeDir.left);
-      return KeyEventResult.handled;
-    }
-    if (k == LogicalKeyboardKey.arrowRight || k == LogicalKeyboardKey.keyD) {
-      _setDir(SwipeDir.right);
-      return KeyEventResult.handled;
-    }
-    return KeyEventResult.ignored;
+  String _fmtTime(int s) {
+    final m = (s ~/ 60).toString().padLeft(2, '0');
+    final ss = (s % 60).toString().padLeft(2, '0');
+    return '$m:$ss';
   }
 
-  // ---- UI ----
+  void _exit() => Navigator.of(context).pop();
+
+  // ---- UI (全屏 Stack,无 AppBar) ----
   @override
   Widget build(BuildContext context) {
-    return GameShell(
-      title: '贪吃蛇',
-      actions: [
-        if (_started && !_over)
-          IconButton(
-            tooltip: _paused ? '继续' : '暂停',
-            icon: Icon(_paused ? Icons.play_arrow : Icons.pause,
-                color: const Color(0xFF6EE060)),
-            onPressed: _togglePause,
-          ),
-        TextButton(
-          onPressed: _newGame,
-          child: const Text('新游戏',
-              style: TextStyle(color: Color(0xFF6EE060))),
-        ),
-      ],
-      body: Focus(
-        focusNode: _focus,
-        autofocus: true,
-        onKeyEvent: _onKey,
-        child: SwipeDetector(
-          continuous: true,
-          onSwipe: _setDir,
+    return PopScope(
+      canPop: true,
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0A0D14),
+        body: SafeArea(
           child: LayoutBuilder(
             builder: (ctx, c) {
-              final maxW = c.maxWidth - 24;
-              final maxH = c.maxHeight - 56; // 顶部状态行 + 间距
-              final aspect = _cols / _rows;
-              var bw = maxW;
-              var bh = bw / aspect;
-              if (bh > maxH) {
-                bh = maxH;
-                bw = bh * aspect;
-              }
-              return Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(width: c.maxWidth, child: _scoreRow()),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: bw,
-                      height: bh,
-                      child: Stack(
-                        children: [
-                          CustomPaint(
-                            size: Size(bw, bh),
-                            painter: _SnakePainter(
-                              _snake,
-                              _food,
-                              _obstacles,
-                              _cols,
-                              _rows,
-                              _dir,
-                              _eatAnim,
-                            ),
-                          ),
-                          if (!_started || _over || _paused || _leveling)
-                            _overlay(),
-                        ],
+              final cellW = c.maxWidth / _cols;
+              final cellH = c.maxHeight / _rows;
+              final cell = min(cellW, cellH);
+              final bw = cell * _cols;
+              final bh = cell * _rows;
+              final boardLeft = (c.maxWidth - bw) / 2;
+              return Stack(
+                children: [
+                  // 棋盘(全屏居中)
+                  Positioned.fill(
+                    child: Center(
+                      child: SizedBox(
+                        width: bw,
+                        height: bh,
+                        child: CustomPaint(
+                          painter: _SnakePainter(_snake, _food, _obstacles,
+                              _cols, _rows, _dir, _eatAnim),
+                        ),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                  // 顶部半透明 HUD
+                  Positioned(
+                    top: 2,
+                    left: 8,
+                    right: 8,
+                    child: _hud(),
+                  ),
+                  // 右上:暂停/退出
+                  Positioned(
+                    top: 2,
+                    right: 4,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_started && !_over && !_leveling)
+                          _floatBtn(
+                              _paused ? Icons.play_arrow : Icons.pause,
+                              _togglePause),
+                        _floatBtn(Icons.close, _exit),
+                      ],
+                    ),
+                  ),
+                  // 摇杆:左下半区
+                  Positioned(
+                    left: boardLeft + 4,
+                    bottom: 4,
+                    child: SizedBox(
+                      width: c.maxWidth * 0.38,
+                      height: c.maxHeight * 0.55,
+                      child: _Joystick(
+                        onDir: (d) {
+                          if (d != null) _setDir(d);
+                        },
+                      ),
+                    ),
+                  ),
+                  // 遮罩(未开始 / 暂停 / 过关 / 结束)
+                  if (!_started || _over || _paused || _leveling)
+                    Positioned.fill(
+                      child: Container(
+                          color: const Color(0xCC000000),
+                          alignment: Alignment.center,
+                          child: _overlay()),
+                    ),
+                ],
               );
             },
           ),
@@ -364,130 +345,202 @@ class _SnakePageState extends State<SnakePage> {
     );
   }
 
-  Widget _scoreRow() {
+  Widget _hud() {
     return Row(
       children: [
-        _chip('得分', '$_score', const Color(0xFF6EE060)),
-        const SizedBox(width: 8),
-        _chip('关卡', '$_level', const Color(0xFFFFA726)),
-        const SizedBox(width: 8),
-        _chip('进度', '$_levelEaten/$_levelTarget', const Color(0xFFBA68C8)),
-        const SizedBox(width: 8),
-        _chip('最高', '$_best', const Color(0xFFFFD54A)),
-        const SizedBox(width: 8),
-        _chip('用时', _fmtTime(_elapsed), const Color(0xFF64B5F6)),
+        _chip('得分$_score', const Color(0xFF6EE060)),
+        const SizedBox(width: 6),
+        _chip('第$_level关', const Color(0xFFFFA726)),
+        const SizedBox(width: 6),
+        _chip('$_levelEaten/$_levelTarget', const Color(0xFFBA68C8)),
+        const SizedBox(width: 6),
+        _chip(_fmtTime(_elapsed), const Color(0xFF64B5F6)),
+        const SizedBox(width: 6),
+        _chip('🏆$_best', const Color(0xFFFFD54A)),
       ],
     );
   }
 
-  String _fmtTime(int s) {
-    final m = (s ~/ 60).toString().padLeft(2, '0');
-    final ss = (s % 60).toString().padLeft(2, '0');
-    return '$m:$ss';
+  Widget _chip(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0x88000000),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.5), width: 1),
+      ),
+      child: Text(text,
+          style: TextStyle(
+              color: color, fontSize: 11, fontWeight: FontWeight.bold)),
+    );
   }
 
-  Widget _chip(String label, String value, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-      decoration: BoxDecoration(
-        color: const Color(0xFF262626),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.4), width: 1),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(label,
-              style: const TextStyle(color: Color(0xFF999999), fontSize: 9)),
-          Text(value,
-              style: TextStyle(
-                  color: color, fontSize: 14, fontWeight: FontWeight.bold)),
-        ],
+  Widget _floatBtn(IconData icon, VoidCallback? onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 2),
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: const Color(0x55000000),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(icon, color: Colors.white70, size: 20),
       ),
     );
   }
 
   Widget _overlay() {
-    if (_leveling) {
-      return Container(
-        color: const Color(0xAA000000),
-        alignment: Alignment.center,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('🎉 第 $_level 关 通过！',
-                style: const TextStyle(
-                    color: Color(0xFFFFD54A),
-                    fontSize: 26,
-                    fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Text('蛇身长度 ${_snake.length} · 障碍 +${(_level - 1) * 3}',
-                style: const TextStyle(color: Colors.white70, fontSize: 13)),
-            const SizedBox(height: 6),
-            const Text('准备加速…',
-                style: TextStyle(color: Colors.white54, fontSize: 12)),
-          ],
-        ),
-      );
-    }
-    if (_paused) {
-      return Container(
-        color: const Color(0xCC000000),
-        alignment: Alignment.center,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('暂停',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 30,
-                    fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            TextButton(
-              onPressed: _togglePause,
-              child: const Text('继续游戏',
-                  style: TextStyle(color: Color(0xFF6EE060), fontSize: 16)),
-            ),
-          ],
-        ),
-      );
-    }
-    final start = !_started;
-    return Container(
-      color: const Color(0xCC000000),
-      alignment: Alignment.center,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            start ? '贪吃蛇' : '游戏结束',
-            style: TextStyle(
-              color: start ? const Color(0xFF6EE060) : Colors.white,
-              fontSize: 30,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          if (!start) ...[
-            const SizedBox(height: 10),
-            Text('得分 $_score · 第 $_level 关 · 最高 $_best',
-                style: const TextStyle(color: Colors.white70, fontSize: 14)),
-          ],
-          const SizedBox(height: 16),
-          if (start)
-            const Text('滑动方向开始（横屏）',
-                style: TextStyle(color: Color(0xFFAAAAAA), fontSize: 14))
-          else
-            TextButton(
-              onPressed: _newGame,
-              child: const Text('再来一局',
-                  style: TextStyle(color: Color(0xFFFFD54A), fontSize: 16)),
-            ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (_leveling) ...[
+          Text('🎉 第 $_level 关 通过!',
+              style: const TextStyle(
+                  color: Color(0xFFFFD54A),
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          Text('蛇身长度 ${_snake.length} · 障碍 +${(_level - 1) * 3}',
+              style: const TextStyle(color: Colors.white70, fontSize: 12)),
+        ] else if (_paused) ...[
+          const Text('暂停',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 26,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(height: 14),
+          _ovBtn('继续', const Color(0xFF6EE060), _togglePause),
+        ] else if (_over) ...[
+          const Text('游戏结束',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 26,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          Text('得分 $_score · 第 $_level 关 · 最高 $_best',
+              style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          const SizedBox(height: 14),
+          _ovBtn('再来一局', const Color(0xFFFFD54A), _newGame),
+        ] else ...[
+          const Text('贪吃蛇',
+              style: TextStyle(
+                  color: Color(0xFF6EE060),
+                  fontSize: 26,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(height: 10),
+          const Text('摇杆控制方向 · 横屏全屏',
+              style: TextStyle(color: Colors.white70, fontSize: 13)),
+          const SizedBox(height: 14),
+          _ovBtn('开始', const Color(0xFF6EE060), _start),
         ],
+      ],
+    );
+  }
+
+  Widget _ovBtn(String text, Color color, VoidCallback onTap) {
+    return TextButton(
+      style: TextButton.styleFrom(
+        backgroundColor: color,
+        padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 9),
+      ),
+      onPressed: onTap,
+      child: Text(text,
+          style: const TextStyle(
+              color: Color(0xFF222222), fontWeight: FontWeight.bold)),
+    );
+  }
+}
+
+// ---- 虚拟摇杆(仿坦克,四向拖动) ----
+class _Joystick extends StatefulWidget {
+  final ValueChanged<SwipeDir?> onDir;
+  const _Joystick({required this.onDir});
+
+  @override
+  State<_Joystick> createState() => _JoystickState();
+}
+
+class _JoystickState extends State<_Joystick> {
+  static const double _base = 56;
+  static const double _dead = 12;
+
+  Offset? _origin;
+  Offset? _knob;
+
+  void _update(Offset o, {required bool isNew}) {
+    final origin = isNew ? o : (_origin ?? o);
+    final dx = o.dx - origin.dx;
+    final dy = o.dy - origin.dy;
+    final len2 = dx * dx + dy * dy;
+    SwipeDir? dir;
+    Offset knob = origin;
+    if (len2 >= _dead * _dead) {
+      final len = sqrt(len2);
+      final cl = len > _base ? _base / len : 1.0;
+      knob = Offset(origin.dx + dx * cl, origin.dy + dy * cl);
+      dir = dx.abs() > dy.abs()
+          ? (dx > 0 ? SwipeDir.right : SwipeDir.left)
+          : (dy > 0 ? SwipeDir.down : SwipeDir.up);
+    }
+    setState(() {
+      _origin = origin;
+      _knob = knob;
+    });
+    widget.onDir(dir);
+  }
+
+  void _reset() {
+    setState(() {
+      _origin = null;
+      _knob = null;
+    });
+    widget.onDir(null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onPanDown: (d) => _update(d.localPosition, isNew: true),
+      onPanUpdate: (d) => _update(d.localPosition, isNew: false),
+      onPanEnd: (_) => _reset(),
+      onPanCancel: _reset,
+      child: CustomPaint(
+        painter: _JoystickPainter(_origin, _knob),
+        child: const SizedBox.expand(),
       ),
     );
   }
 }
 
+class _JoystickPainter extends CustomPainter {
+  final Offset? origin;
+  final Offset? knob;
+  _JoystickPainter(this.origin, this.knob);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (origin == null) return;
+    canvas.drawCircle(
+        origin!, 56, Paint()..color = const Color(0x18FFFFFF));
+    canvas.drawCircle(
+      origin!,
+      56,
+      Paint()
+        ..color = const Color(0x44FFFFFF)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
+    canvas.drawCircle(
+        knob ?? origin!, 24, Paint()..color = const Color(0x88FFFFFF));
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+// ---- 画蛇 ----
 class _SnakePainter extends CustomPainter {
   final List<Point<int>> snake;
   final Point<int> food;
@@ -495,6 +548,7 @@ class _SnakePainter extends CustomPainter {
   final int cols, rows;
   final SwipeDir dir;
   final double eatAnim;
+
   _SnakePainter(this.snake, this.food, this.obstacles, this.cols, this.rows,
       this.dir, this.eatAnim);
 
@@ -502,21 +556,33 @@ class _SnakePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final cw = size.width / cols;
     final ch = size.height / rows;
-    canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFF1F2A20));
+    canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFF0E1118));
 
-    // 障碍物(灰岩石块)
-    final obPaint = Paint()..color = const Color(0xFF55605A);
+    // 边框(微亮)
+    canvas.drawRect(Offset.zero & size,
+        Paint()
+          ..color = const Color(0xFF2A303A)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5);
+
+    // 障碍物
+    final obPaint = Paint()..color = const Color(0xFF414A58);
     for (final o in obstacles) {
-      final r = Rect.fromLTWH(o.x * cw + 1, o.y * ch + 1, cw - 2, ch - 2);
       canvas.drawRRect(
-          RRect.fromRectAndRadius(r, Radius.circular(cw * 0.18)), obPaint);
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(o.x * cw + 2, o.y * ch + 2, cw - 4, ch - 4),
+          Radius.circular(cw * 0.15),
+        ),
+        obPaint,
+      );
     }
 
     // 食物
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(food.x * cw + 1.5, food.y * ch + 1.5, cw - 3, ch - 3),
-        Radius.circular(cw * 0.3),
+        Rect.fromLTWH(
+            food.x * cw + 2, food.y * ch + 2, cw - 4, ch - 4),
+        Radius.circular(cw * 0.28),
       ),
       Paint()..color = const Color(0xFFFF5252),
     );
@@ -525,7 +591,7 @@ class _SnakePainter extends CustomPainter {
     for (int i = 0; i < snake.length; i++) {
       final p = snake[i];
       final isHead = i == 0;
-      final rect = Rect.fromLTWH(p.x * cw + 1, p.y * ch + 1, cw - 2, ch - 2);
+      final rect = Rect.fromLTWH(p.x * cw + 2, p.y * ch + 2, cw - 4, ch - 4);
       canvas.drawRRect(
         RRect.fromRectAndRadius(rect, Radius.circular(cw * 0.25)),
         Paint()
@@ -535,7 +601,6 @@ class _SnakePainter extends CustomPainter {
     }
   }
 
-  /// 蛇头:两眼朝行进方向,吃到食物时嘴张开。
   void _drawHead(Canvas canvas, Rect r) {
     final (fx, fy) = switch (dir) {
       SwipeDir.up => (0.0, -1.0),
@@ -543,7 +608,7 @@ class _SnakePainter extends CustomPainter {
       SwipeDir.left => (-1.0, 0.0),
       SwipeDir.right => (1.0, 0.0),
     };
-    final (px, py) = (-fy, fx); // 垂直方向
+    final (px, py) = (-fy, fx);
     final cx = r.center.dx, cy = r.center.dy;
     final w = r.width;
     final eye = Paint()..color = const Color(0xFFFFFFFF);
@@ -556,20 +621,22 @@ class _SnakePainter extends CustomPainter {
       canvas.drawCircle(Offset(ex, ey), er, eye);
       canvas.drawCircle(Offset(ex + fx * pr, ey + fy * pr), pr, pup);
     }
-    // 嘴:前方张开的楔形,随吃食动画放大
     final e = eatAnim;
     if (e > 0.02) {
       final depth = w * 0.26 * e;
       final half = w * 0.16 * (0.4 + 0.6 * e);
       final tip = Offset(cx + fx * w * 0.34, cy + fy * w * 0.34);
       final b1 = Offset(cx - fx * depth + px * half, cy - fy * depth + py * half);
-      final b2 = Offset(cx - fx * depth - px * half, cy - fy * depth - py * half);
-      final path = Path()
-        ..moveTo(tip.dx, tip.dy)
-        ..lineTo(b1.dx, b1.dy)
-        ..lineTo(b2.dx, b2.dy)
-        ..close();
-      canvas.drawPath(path, Paint()..color = const Color(0xFF5A1414));
+      final b2 =
+          Offset(cx - fx * depth - px * half, cy - fy * depth - py * half);
+      canvas.drawPath(
+        Path()
+          ..moveTo(tip.dx, tip.dy)
+          ..lineTo(b1.dx, b1.dy)
+          ..lineTo(b2.dx, b2.dy)
+          ..close(),
+        Paint()..color = const Color(0xFF5A1414),
+      );
     }
   }
 

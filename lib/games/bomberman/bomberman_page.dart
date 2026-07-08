@@ -54,11 +54,15 @@ class _Player extends _Mover {
         super(1, 1);
 }
 
+enum _EnemyType { wanderer, chaser }
+
 class _Enemy extends _Mover {
   final double speed;
   final Color color;
+  final _EnemyType type;
   bool alive = true;
-  _Enemy(super.col, super.row, this.color, this.speed);
+  _Enemy(super.col, super.row, this.color, this.speed,
+      [this.type = _EnemyType.wanderer]);
 }
 
 class _Bomb {
@@ -71,6 +75,14 @@ class _PowerUp {
   final int col, row;
   final _Power kind;
   _PowerUp(this.col, this.row, this.kind);
+}
+
+// 视觉特效(死亡弹开/得分飘字)
+class _Vfx {
+  double cx, cy; // 连续格坐标
+  double timer; // 剩余秒
+  final int? score; // 飘字用(非空=文字,+N)
+  _Vfx(this.cx, this.cy, this.timer, {this.score});
 }
 
 (int, int) _delta(SwipeDir d) => switch (d) {
@@ -112,6 +124,8 @@ class _BomberPageState extends State<BomberPage>
   final Map<int, _Bomb> _bombs = {}; // key = row*cols+col
   final Map<int, double> _flame = {}; // key -> 剩余秒
   final List<_PowerUp> _powers = [];
+  final List<_Vfx> _vfx = [];
+  double _shakeTimer = 0; // 震屏剩余秒(爆炸近距离时触发)
 
   int _level = 1;
   int _score = 0, _best = 0;
@@ -213,6 +227,8 @@ class _BomberPageState extends State<BomberPage>
     _bombs.clear();
     _flame.clear();
     _powers.clear();
+    _vfx.clear();
+    _shakeTimer = 0;
     final corners = <(int, int)>[
       (_cols - 2, _rows - 2),
       (_cols - 2, 1),
@@ -221,11 +237,17 @@ class _BomberPageState extends State<BomberPage>
     final count = min(2 + level, 6);
     for (int i = 0; i < count; i++) {
       final (cc, rr) = corners[i % corners.length];
-      _grid[rr][cc] = 0; // 清出生格
-      // 偶尔清出一个邻居,保证能动
+      _grid[rr][cc] = 0;
       _spawnClearNeighbor(cc, rr);
       final speed = min(3.3, 2.35 + level * 0.12);
-      final e = _Enemy(cc, rr, _enemyColors[i % _enemyColors.length], speed);
+      // 第3关开始出现追击型,关卡越高追击比例越大
+      final type = (level >= 3 && i < level - 1)
+          ? _EnemyType.chaser
+          : _EnemyType.wanderer;
+      final color = type == _EnemyType.chaser
+          ? const Color(0xFFFF1744) // 鲜红色=追击
+          : _enemyColors[i % _enemyColors.length];
+      final e = _Enemy(cc, rr, color, speed, type);
       e.dir = _firstValidDir(cc, rr) ?? SwipeDir.right;
       _enemies.add(e);
     }
@@ -332,11 +354,6 @@ class _BomberPageState extends State<BomberPage>
     _applyInput(d);
   }
 
-  void _releaseDir(SwipeDir d) {
-    _held.remove(d);
-    // 到下一格后再决定是否停(onArrive 读 _held)
-  }
-
   void _applyInput(SwipeDir d) {
     if (!_playing) return;
     // 即时反向:把目标格变当前格,反向继续
@@ -353,8 +370,43 @@ class _BomberPageState extends State<BomberPage>
     }
     if (_player.dir == null) {
       if (!_cellSolidNeighbor(_player.col, _player.row, d)) _player.dir = d;
+      return;
     }
-    // 否则保持当前腿,onArrive 时取 _held.last
+    // 垂直转向:沿当前方向行进途中允许即刻拐弯,自动对准新方向的车道
+    if (_opp(d) != _player.dir && d != _player.dir) {
+      final (cx, cy) = _cellPos(_player);
+      final (ndx, ndy) = _delta(d);
+      int nc, nr;
+      double nt;
+      if (ndx != 0) {
+        // 水平方向:横向对齐车道,纵向取四舍五入
+        nr = cy.round();
+        if (ndx > 0) {
+          nc = cx.floor();
+          nt = cx - nc;
+        } else {
+          nc = cx.ceil();
+          nt = nc - cx;
+        }
+      } else {
+        // 垂直方向:纵向对齐车道,横向取四舍五入
+        nc = cx.round();
+        if (ndy > 0) {
+          nr = cy.floor();
+          nt = cy - nr;
+        } else {
+          nr = cy.ceil();
+          nt = nr - cy;
+        }
+      }
+      if (nc < 0 || nc >= _cols || nr < 0 || nr >= _rows) return;
+      if (_cellSolid(nc, nr)) return;
+      _player.col = nc;
+      _player.row = nr;
+      _player.dir = d;
+      _player.t = nt.clamp(0.0, 1.0);
+    }
+    // 同向忽略,onArrive 时取 _held.last 决定继续或停
   }
 
   bool _cellSolidNeighbor(int c, int r, SwipeDir d) {
@@ -404,6 +456,14 @@ class _BomberPageState extends State<BomberPage>
       }
     }
     if (_player.invuln > 0) _player.invuln = max(0, _player.invuln - dt);
+    if (_shakeTimer > 0) _shakeTimer = max(0, _shakeTimer - dt);
+    // VFX 计时
+    if (_vfx.isNotEmpty) {
+      for (int i = _vfx.length - 1; i >= 0; i--) {
+        _vfx[i].timer -= dt;
+        if (_vfx[i].timer <= 0) _vfx.removeAt(i);
+      }
+    }
 
     // 移动
     _advance(_player, dt, _player.speed, _playerArrive);
@@ -454,7 +514,20 @@ class _BomberPageState extends State<BomberPage>
       if (!_cellSolidNeighbor(e.col, e.row, d)) valid.add(d);
     }
     if (valid.isEmpty) return null;
-    // 追击概率
+    // 追击型:始终选离玩家最近的有效方向
+    if (e.type == _EnemyType.chaser && _player.alive) {
+      valid.sort((a, b) {
+        final (ax, ay) = _delta(a);
+        final (bx, by) = _delta(b);
+        final da = (_player.col - (e.col + ax)).abs() +
+            (_player.row - (e.row + ay)).abs();
+        final db = (_player.col - (e.col + bx)).abs() +
+            (_player.row - (e.row + by)).abs();
+        return da.compareTo(db);
+      });
+      return valid.first;
+    }
+    // 游走型:概率追击,概率保持,否则随机
     if (_player.alive && _rng.nextDouble() < 0.42) {
       valid.sort((a, b) {
         final (ax, ay) = _delta(a);
@@ -502,12 +575,29 @@ class _BomberPageState extends State<BomberPage>
     }
   }
 
-  // ---- 爆炸 ----
+  // ---- 爆炸(含连锁引爆) ----
+  // 已处理过的炸弹 key,防止 A←B 互炸形成死循环。
+  final Set<int> _chainDone = {};
+
   void _explode(_Bomb b) {
+    _chainDone.clear();
+    _explodeChain(b);
+    _chainDone.clear();
+    // 近距离爆炸震屏
+    final dist = (_player.col - b.col).abs() + (_player.row - b.row).abs();
+    if (dist <= 3) _shakeTimer = 0.18;
+  }
+
+  void _explodeChain(_Bomb b) {
+    final bk = _key(b.col, b.row);
+    if (_chainDone.contains(bk)) return;
+    _chainDone.add(bk);
     _player.activeBombs = max(0, _player.activeBombs - 1);
     _snd.play('explosion');
-    HapticFeedback.heavyImpact();
-    final cells = <int>[_key(b.col, b.row)];
+    if (_vfx.length < 24) {
+      _vfx.add(_Vfx(b.col.toDouble() + 0.5, b.row.toDouble() + 0.5, 0.35));
+    }
+    final cells = <int>[];
     for (final d in _allDirs) {
       final (dx, dy) = _delta(d);
       for (int i = 1; i <= b.range; i++) {
@@ -519,10 +609,18 @@ class _BomberPageState extends State<BomberPage>
         if (_grid[r][c] == 1) {
           _grid[r][c] = 0;
           _score += 5;
+          if (_vfx.length < 24) {
+            _vfx.add(_Vfx(c.toDouble() + 0.5, r.toDouble() + 0.5, 0.28));
+          }
           if (_rng.nextDouble() < _kCrateDropChance) {
             _powers.add(_PowerUp(c, r, _Power.values[_rng.nextInt(3)]));
           }
-          break; // 砖:炸毁后火焰止步
+          break;
+        }
+        // 链式:火焰碰到其他炸弹 → 立刻引爆(沿火焰方向继续,但新炸弹按自身范围扩)
+        if (_bombs.containsKey(k) && !_chainDone.contains(k)) {
+          final nb = _bombs.remove(k);
+          if (nb != null) _explodeChain(nb);
         }
       }
     }
@@ -530,7 +628,7 @@ class _BomberPageState extends State<BomberPage>
       _flame[k] = _kFlameTime;
     }
     _updateBest();
-    setState(() {}); // 砖块/分数变化
+    setState(() {});
   }
 
   /// 玩家与敌人的连续格坐标(含行进插值),用于碰撞判定。
@@ -578,6 +676,12 @@ class _BomberPageState extends State<BomberPage>
         e.alive = false;
         _score += 100;
         _snd.play('hit');
+        // 死亡动效 + 得分飘字
+        if (_vfx.length < 20) {
+          _vfx.add(_Vfx(
+              e.col.toDouble() + 0.5, e.row.toDouble() + 0.5, 0.40,
+              score: 100));
+        }
       }
     }
     if (hitPlayer) _hurtPlayer();
@@ -727,27 +831,34 @@ class _BomberPageState extends State<BomberPage>
                 children: [
                   _hud(),
                   const SizedBox(height: 6),
-                  SizedBox(
-                    width: boardW,
-                    height: boardH,
-                    child: Stack(
-                      children: [
-                        CustomPaint(
-                          size: Size(boardW, boardH),
-                          painter: _BomberPainter(
-                            grid: _grid,
-                            player: _player,
-                            enemies: _enemies,
-                            bombs: _bombs,
-                            flame: _flame,
-                            powers: _powers,
-                            cell: cell,
-                            repaint: _repaint,
+                  Transform.translate(
+                    offset: _shakeTimer > 0
+                        ? Offset((_rng.nextDouble() - 0.5) * cell * 0.28,
+                            (_rng.nextDouble() - 0.5) * cell * 0.28)
+                        : Offset.zero,
+                    child: SizedBox(
+                      width: boardW,
+                      height: boardH,
+                      child: Stack(
+                        children: [
+                          CustomPaint(
+                            size: Size(boardW, boardH),
+                            painter: _BomberPainter(
+                              grid: _grid,
+                              player: _player,
+                              enemies: _enemies,
+                              bombs: _bombs,
+                              flame: _flame,
+                              powers: _powers,
+                              vfx: _vfx,
+                              cell: cell,
+                              repaint: _repaint,
+                            ),
                           ),
-                        ),
-                        if (!_started || _over || _paused || _cleared)
-                          _overlay(),
-                      ],
+                          if (!_started || _over || _paused || _cleared)
+                            _overlay(),
+                        ],
+                      ),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -880,36 +991,11 @@ class _BomberPageState extends State<BomberPage>
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // 方向键(十字)
+          // 虚拟摇杆(仿坦克,拖动控制四向)
           SizedBox(
             width: btn * 3,
             height: btn * 3,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                Positioned(
-                    top: 0,
-                    child: _dirBtn(SwipeDir.up, Icons.arrow_drop_up, btn)),
-                Positioned(
-                    bottom: 0,
-                    child: _dirBtn(SwipeDir.down, Icons.arrow_drop_down, btn)),
-                Positioned(
-                    left: 0,
-                    child: _dirBtn(SwipeDir.left, Icons.arrow_left, btn)),
-                Positioned(
-                    right: 0,
-                    child: _dirBtn(SwipeDir.right, Icons.arrow_right, btn)),
-                Container(
-                  width: btn,
-                  height: btn,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1A1A1A),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: const Color(0xFF444444)),
-                  ),
-                ),
-              ],
-            ),
+            child: _Joystick(onDir: _onJoystickDir),
           ),
           // 炸弹键
           GestureDetector(
@@ -947,25 +1033,14 @@ class _BomberPageState extends State<BomberPage>
     );
   }
 
-  Widget _dirBtn(SwipeDir d, IconData icon, double s) {
-    const color = Color(0xFFFF8A4C);
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (_) => _pressDir(d),
-      onTapUp: (_) => _releaseDir(d),
-      onTapCancel: () => _releaseDir(d),
-      child: Container(
-        width: s,
-        height: s,
-        decoration: BoxDecoration(
-          color: const Color(0xFF262626),
-          shape: BoxShape.circle,
-          border: Border.all(color: color.withValues(alpha: 0.55), width: 1.5),
-        ),
-        alignment: Alignment.center,
-        child: Icon(icon, color: color, size: s * 0.85),
-      ),
-    );
+  void _onJoystickDir(SwipeDir? d) {
+    if (d != null) {
+      _held.clear();
+      _held.add(d);
+      _applyInput(d);
+    } else {
+      _held.clear();
+    }
   }
 }
 
@@ -986,8 +1061,10 @@ class _BomberPainter extends CustomPainter {
     required this.flame,
     required this.powers,
     required this.cell,
+    this.vfx = const [],
     super.repaint,
   });
+  final List<_Vfx> vfx;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1033,15 +1110,6 @@ class _BomberPainter extends CustomPainter {
     for (final p in powers) {
       _drawPower(canvas, p);
     }
-    // 炸弹
-    for (final b in bombs.values) {
-      _drawBomb(canvas, b);
-    }
-    // 火焰
-    flame.forEach((k, v) {
-      final r = k ~/ _cols, c = k % _cols;
-      _drawFlame(canvas, c * cell, r * cell, cell, v);
-    });
     // 敌人
     for (final e in enemies) {
       if (!e.alive) continue;
@@ -1054,6 +1122,40 @@ class _BomberPainter extends CustomPainter {
       if (!blink) {
         _drawBlob(canvas, player.posOf(cell), cell,
             const Color(0xFF42A5F5), true, player.dir);
+      }
+    }
+    // 炸弹(画在玩家上面,确保脚下的雷清晰可见)
+    for (final b in bombs.values) {
+      _drawBomb(canvas, b);
+    }
+    // 火焰
+    flame.forEach((k, v) {
+      final r = k ~/ _cols, c = k % _cols;
+      _drawFlame(canvas, c * cell, r * cell, cell, v);
+    });
+    // VFX 特效:死亡弹开 / 得分飘字
+    for (final v in vfx) {
+      final a = (v.timer / 0.40).clamp(0.0, 1.0);
+      if (v.score != null) {
+        // 得分飘字:上浮 + 淡出
+        final tp = TextPainter(
+          text: TextSpan(
+              text: '+${v.score}',
+              style: TextStyle(
+                  color: const Color(0xFFFFD54A).withValues(alpha: a),
+                  fontSize: cell * 0.55,
+                  fontWeight: FontWeight.bold)),
+          textAlign: TextAlign.center,
+          textDirection: TextDirection.ltr,
+        )..layout();
+        final rise = (1 - a) * cell * 0.5;
+        tp.paint(canvas,
+            Offset(v.cx * cell - tp.width / 2, v.cy * cell - rise - tp.height));
+      } else {
+        // 死亡弹开:扩散圆
+        final r = cell * 0.10 + (1 - a) * cell * 0.30;
+        canvas.drawCircle(Offset(v.cx * cell, v.cy * cell), r,
+            Paint()..color = const Color(0xFFFFFFFF).withValues(alpha: a * 0.7));
       }
     }
   }
@@ -1185,4 +1287,81 @@ class _BomberPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _BomberPainter old) => true;
+}
+
+// ---- 虚拟摇杆(仿坦克,拖动控制四向) ----
+class _Joystick extends StatefulWidget {
+  final ValueChanged<SwipeDir?> onDir;
+  const _Joystick({required this.onDir});
+  @override
+  State<_Joystick> createState() => _JoystickState();
+}
+
+class _JoystickState extends State<_Joystick> {
+  static const double _base = 56;
+  static const double _dead = 12;
+  Offset? _origin;
+  Offset? _knob;
+
+  void _update(Offset o, {required bool isNew}) {
+    final origin = isNew ? o : (_origin ?? o);
+    final dx = o.dx - origin.dx;
+    final dy = o.dy - origin.dy;
+    final len2 = dx * dx + dy * dy;
+    SwipeDir? dir;
+    Offset knob = origin;
+    if (len2 >= _dead * _dead) {
+      final len = sqrt(len2);
+      final cl = len > _base ? _base / len : 1.0;
+      knob = Offset(origin.dx + dx * cl, origin.dy + dy * cl);
+      dir = dx.abs() > dy.abs()
+          ? (dx > 0 ? SwipeDir.right : SwipeDir.left)
+          : (dy > 0 ? SwipeDir.down : SwipeDir.up);
+    }
+    setState(() { _origin = origin; _knob = knob; });
+    widget.onDir(dir);
+  }
+
+  void _reset() {
+    setState(() { _origin = null; _knob = null; });
+    widget.onDir(null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onPanDown: (d) => _update(d.localPosition, isNew: true),
+      onPanUpdate: (d) => _update(d.localPosition, isNew: false),
+      onPanEnd: (_) => _reset(),
+      onPanCancel: _reset,
+      child: CustomPaint(
+        painter: _JoystickPainter(_origin, _knob),
+        child: const SizedBox.expand(),
+      ),
+    );
+  }
+}
+
+class _JoystickPainter extends CustomPainter {
+  final Offset? origin;
+  final Offset? knob;
+  _JoystickPainter(this.origin, this.knob);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (origin == null) return;
+    canvas.drawCircle(origin!, 56, Paint()..color = const Color(0x18FFFFFF));
+    canvas.drawCircle(
+      origin!, 56,
+      Paint()
+        ..color = const Color(0x44FFFFFF)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
+    canvas.drawCircle(knob ?? origin!, 24, Paint()..color = const Color(0x88FFFFFF));
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
