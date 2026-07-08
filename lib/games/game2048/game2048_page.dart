@@ -284,26 +284,31 @@ class _Game2048PageState extends State<Game2048Page> {
   }
 
   Widget _board(double side) {
-    const pad = 8.0;
-    const gap = 8.0;
+    const pad = 9.0;
+    const gap = 9.0;
     final inner = side - 2 * pad;
     final cell = (inner - 3 * gap) / 4;
     double leftOf(int col) => pad + col * (cell + gap);
     double topOf(int row) => pad + row * (cell + gap);
-    return SizedBox(
+    return Container(
       width: side,
       height: side,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF21253A), Color(0xFF12141F)],
+        ),
+        border: Border.all(color: const Color(0xFF363C52), width: 1),
+        boxShadow: const [
+          BoxShadow(
+              color: Color(0x66000000), blurRadius: 20, offset: Offset(0, 10)),
+        ],
+      ),
       child: Stack(
         children: [
-          // 棋盘底 + 空格槽
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: const Color(0xFFBBADA0),
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-          ),
+          // 空格槽
           for (int i = 0; i < 16; i++)
             Positioned(
               left: leftOf(i % 4),
@@ -312,8 +317,8 @@ class _Game2048PageState extends State<Game2048Page> {
               height: cell,
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: const Color(0x22000000),
-                  borderRadius: BorderRadius.circular(6),
+                  color: const Color(0x14FFFFFF),
+                  borderRadius: BorderRadius.circular(10),
                 ),
               ),
             ),
@@ -336,81 +341,160 @@ class _Game2048PageState extends State<Game2048Page> {
   }
 
   Widget _tileVisual(_Tile t, double cell) {
+    final (gradient, glow) = _tileStyle(t.value);
+    final g = _glow(t.value);
     final box = Container(
-      alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: _tileColor(t.value),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(10),
+        gradient: gradient,
+        border: Border.all(color: Colors.white.withValues(alpha: 0.18), width: 1),
+        boxShadow: g > 0
+            ? [
+                BoxShadow(
+                  color: glow.withValues(alpha: 0.30 + 0.45 * g),
+                  blurRadius: 6 + 20 * g,
+                  spreadRadius: 1 + 3 * g,
+                  offset: const Offset(0, 3),
+                ),
+              ]
+            : const [
+                BoxShadow(
+                    color: Color(0x55000000), blurRadius: 4, offset: Offset(0, 2)),
+              ],
       ),
-      child: Text(
-        '${t.value}',
-        style: TextStyle(
-          color: t.value <= 4 ? const Color(0xFF776E65) : Colors.white,
-          fontSize: _tileFont(t.value),
-          fontWeight: FontWeight.bold,
-          decoration: TextDecoration.none,
-        ),
+      child: Stack(
+        children: [
+          // 顶部玻璃高光
+          Positioned(
+            left: 6,
+            right: 6,
+            top: 6,
+            height: cell * 0.34,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(7), bottom: Radius.circular(9)),
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.white.withValues(alpha: 0.30),
+                    Colors.white.withValues(alpha: 0.0),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Center(
+            child: Text(
+              '${t.value}',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: _tileFont(t.value),
+                fontWeight: FontWeight.bold,
+                decoration: TextDecoration.none,
+                shadows: const [
+                  Shadow(
+                      color: Color(0xAA000000),
+                      blurRadius: 2,
+                      offset: Offset(0, 1)),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
-    if (t.justSpawned) {
-      return TweenAnimationBuilder<double>(
-        tween: Tween<double>(begin: 0.0, end: 1.0),
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOutBack,
-        builder: (_, s, child) => Transform.scale(scale: s, child: child),
-        child: box,
-      );
-    }
+    if (t.justSpawned) return _scaleIn(box, 0.0, 180);
+    if (t.justMerged) return _scaleIn(box, 0.80, 150); // 合并弹一下
     return box;
+  }
+
+  Widget _scaleIn(Widget child, double from, int ms) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: from, end: 1.0),
+      duration: Duration(milliseconds: ms),
+      curve: Curves.easeOutBack,
+      builder: (_, s, c) => Transform.scale(scale: s, child: c),
+      child: child,
+    );
   }
 
   Widget _scoreBar() {
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        _scoreBox('得分', '$_score'),
+        _chip('得分', '$_score', const Color(0xFFFFD54A)),
         const SizedBox(width: 8),
-        _scoreBox('最高', '$_best'),
+        _chip('最高', '$_best', const Color(0xFF6EE060)),
       ],
     );
   }
 
-  Widget _scoreBox(String label, String value) {
+  Widget _chip(String label, String value, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
       decoration: BoxDecoration(
-        color: const Color(0xFFBBADA0),
-        borderRadius: BorderRadius.circular(8),
+        color: const Color(0xFF262626),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.45), width: 1),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(label,
-              style: const TextStyle(color: Color(0xFFEEE4DA), fontSize: 11)),
+              style: const TextStyle(color: Color(0xFF999999), fontSize: 10)),
           Text(value,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold)),
+              style: TextStyle(
+                  color: color, fontSize: 18, fontWeight: FontWeight.bold)),
         ],
       ),
     );
   }
 
-  Color _tileColor(int v) {
-    const c = <int, Color>{
-      2: Color(0xFFEEE4DA),
-      4: Color(0xFFEDE0C8),
-      8: Color(0xFFF2B179),
-      16: Color(0xFFF59563),
-      32: Color(0xFFF67C5F),
-      64: Color(0xFFF65E3B),
-      128: Color(0xFFEDCF72),
-      256: Color(0xFFEDCC61),
-      512: Color(0xFFEDC850),
-      1024: Color(0xFFEDC53F),
-      2048: Color(0xFFEDC22E),
+  /// 每个数值的(渐变, 发光色)。冷→暖→金的演进,高数值霓虹感更强。
+  (Gradient, Color) _tileStyle(int v) {
+    final (colors, glow) = switch (v) {
+      2 => (<Color>[const Color(0xFF6E7B9B), const Color(0xFF56638A)],
+          const Color(0xFF6E7B9B)),
+      4 => (<Color>[const Color(0xFF4FC3F7), const Color(0xFF2196F3)],
+          const Color(0xFF4FC3F7)),
+      8 => (<Color>[const Color(0xFF4DD0E1), const Color(0xFF00ACC1)],
+          const Color(0xFF26C6DA)),
+      16 => (<Color>[const Color(0xFF66BB6A), const Color(0xFF43A047)],
+          const Color(0xFF66BB6A)),
+      32 => (<Color>[const Color(0xFF9CCC65), const Color(0xFF7CB342)],
+          const Color(0xFF9CCC65)),
+      64 => (<Color>[const Color(0xFFFFB74D), const Color(0xFFFB8C00)],
+          const Color(0xFFFFA726)),
+      128 => (<Color>[const Color(0xFFFF8A65), const Color(0xFFF4511E)],
+          const Color(0xFFFF7043)),
+      256 => (<Color>[const Color(0xFFF06292), const Color(0xFFD81B60)],
+          const Color(0xFFEC407A)),
+      512 => (<Color>[const Color(0xFFBA68C8), const Color(0xFF8E24AA)],
+          const Color(0xFFAB47BC)),
+      1024 => (<Color>[const Color(0xFF9575CD), const Color(0xFF5E35B1)],
+          const Color(0xFF7E57C2)),
+      2048 => (<Color>[const Color(0xFFFFE082), const Color(0xFFFFB300)],
+          const Color(0xFFFFD54A)),
+      _ => (<Color>[const Color(0xFF26A69A), const Color(0xFF00897B)],
+          const Color(0xFF4DB6AC)),
     };
-    return c[v] ?? const Color(0xFF3C3A32);
+    return (
+      LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: colors,
+      ),
+      glow
+    );
+  }
+
+  /// 发光强度(0..1),随 log2(value) 递增;2/4 不发光。
+  double _glow(int v) {
+    if (v <= 4) return 0.0;
+    final p = log(v) / log(2);
+    return ((p - 2) / 9).clamp(0.0, 1.0);
   }
 
   double _tileFont(int v) {
@@ -422,9 +506,10 @@ class _Game2048PageState extends State<Game2048Page> {
 
   Widget _overlay() {
     final won = _won && !_keepPlaying;
+    final accent = won ? const Color(0xFFFFD54A) : const Color(0xFFFF8A4C);
     return Positioned.fill(
       child: Container(
-        color: const Color(0xCC000000),
+        color: const Color(0xDD000000),
         alignment: Alignment.center,
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -432,29 +517,43 @@ class _Game2048PageState extends State<Game2048Page> {
             Text(
               won ? '达成 2048！' : '游戏结束',
               style: TextStyle(
-                color: won ? const Color(0xFFFFD54A) : Colors.white,
-                fontSize: 28,
+                color: accent,
+                fontSize: 30,
                 fontWeight: FontWeight.bold,
+                shadows: [
+                  Shadow(
+                      color: accent.withValues(alpha: 0.6),
+                      blurRadius: 16,
+                      offset: Offset.zero),
+                ],
               ),
             ),
             const SizedBox(height: 8),
-            Text('得分 $_score',
+            Text('得分 $_score · 最高 $_best',
                 style: const TextStyle(color: Colors.white70, fontSize: 14)),
-            const SizedBox(height: 16),
-            if (won)
-              TextButton(
-                onPressed: () => setState(() => _keepPlaying = true),
-                child: const Text('继续挑战',
-                    style: TextStyle(color: Color(0xFF6EE060), fontSize: 16)),
-              ),
-            TextButton(
-              onPressed: _newGame,
-              child: const Text('再来一局',
-                  style: TextStyle(color: Color(0xFFFFD54A), fontSize: 16)),
-            ),
+            const SizedBox(height: 18),
+            if (won) ...[
+              _ovBtn('继续挑战', const Color(0xFF6EE060),
+                  () => setState(() => _keepPlaying = true)),
+              const SizedBox(height: 10),
+            ],
+            _ovBtn('再来一局', const Color(0xFFFFD54A), _newGame),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _ovBtn(String text, Color color, VoidCallback onTap) {
+    return TextButton(
+      style: TextButton.styleFrom(
+        backgroundColor: color,
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 11),
+      ),
+      onPressed: onTap,
+      child: Text(text,
+          style: const TextStyle(
+              color: Color(0xFF222222), fontWeight: FontWeight.bold)),
     );
   }
 }

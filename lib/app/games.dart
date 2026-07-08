@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../games/bomberman/bomberman_page.dart';
 import '../games/game2048/game2048_page.dart';
 import '../games/gomoku/gomoku_page.dart';
 import '../games/minesweeper/minesweeper_page.dart';
@@ -88,5 +89,14 @@ final List<GameSpec> kGames = [
     accent: const Color(0xFFE0B040),
     builder: (_) => const GomokuPage(),
     bestKey: 'best_gomoku',
+  ),
+  GameSpec(
+    id: 'bomber',
+    title: '泡泡堂',
+    subtitle: '放雷炸敌,过关递增',
+    emoji: '💣',
+    accent: const Color(0xFFFF8A4C),
+    builder: (_) => const BomberPage(),
+    bestKey: 'best_bomber',
   ),
 ];

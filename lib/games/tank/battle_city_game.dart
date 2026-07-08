@@ -15,6 +15,7 @@ import 'maps.dart';
 import 'models.dart';
 import 'painter.dart';
 import 'sound.dart';
+import '../../shared/bgm_synth.dart';
 
 class BattleCityGame extends StatefulWidget {
   const BattleCityGame({super.key});
@@ -66,6 +67,8 @@ class _BattleCityGameState extends State<BattleCityGame>
   final Random _rng = Random();
   final FocusNode _focus = FocusNode();
   final SoundService _sound = SoundService();
+  late final ChiptuneBgm _bgm;
+  bool _bgmOn = false; // 当前 BGM 是否在响(用于 _onTick 内同步)
 
   // 渲染解耦：画布由下列 Listenable 驱动按帧/按需重绘，widget 树不再每帧重建。
   late final SceneView _scene;
@@ -112,6 +115,8 @@ class _BattleCityGameState extends State<BattleCityGame>
     _ticker.start();
     WakelockPlus.enable();
     _sound.init();
+    _bgm = ChiptuneBgm(theme: BgmTheme.march);
+    _bgm.init();
   }
 
   @override
@@ -119,6 +124,7 @@ class _BattleCityGameState extends State<BattleCityGame>
     _ticker.dispose();
     _focus.dispose();
     _sound.dispose();
+    _bgm.dispose();
     _frameRepaint.dispose();
     _terrainRepaint.dispose();
     WakelockPlus.disable();
@@ -297,6 +303,17 @@ class _BattleCityGameState extends State<BattleCityGame>
     _lastElapsed = elapsed;
     _time += dt;
     _perf.tick(dt);
+
+    // 背景音乐:仅 playing 时响(暂停/结算/菜单/结束均停),受静音控制(在 BGM 内部)
+    final wantBgm = phase == Phase.playing;
+    if (wantBgm != _bgmOn) {
+      _bgmOn = wantBgm;
+      if (wantBgm) {
+        _bgm.start();
+      } else {
+        _bgm.stop();
+      }
+    }
 
     switch (phase) {
       case Phase.playing:
@@ -1214,6 +1231,7 @@ class _BattleCityGameState extends State<BattleCityGame>
 
   void _toggleMute() {
     _sound.muted = !_sound.muted;
+    _bgm.setExternalMute(_sound.muted);
     setState(() {});
   }
 
