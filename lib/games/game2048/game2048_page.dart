@@ -324,6 +324,7 @@ class _Game2048PageState extends State<Game2048Page> {
             ),
           // 瓦片：位置由 row/col 决定，AnimatedPositioned 平滑过渡
           for (final t in _tiles)
+            if (t.consumed) const SizedBox.shrink() else
             AnimatedPositioned(
               key: ValueKey(t.id),
               duration: kSlide,
@@ -341,6 +342,16 @@ class _Game2048PageState extends State<Game2048Page> {
   }
 
   Widget _tileVisual(_Tile t, double cell) {
+    // 被合并的瓦片:只画色块滑动到目标(不画数字,避免与幸存者文字重叠成黑影)
+    if (t.consumed) {
+      final (gradient, _) = _tileStyle(t.value);
+      return Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          gradient: gradient,
+        ),
+      );
+    }
     final (gradient, glow) = _tileStyle(t.value);
     final g = _glow(t.value);
     final box = Container(
@@ -392,13 +403,6 @@ class _Game2048PageState extends State<Game2048Page> {
                 color: Colors.white,
                 fontSize: _tileFont(t.value),
                 fontWeight: FontWeight.bold,
-                decoration: TextDecoration.none,
-                shadows: const [
-                  Shadow(
-                      color: Color(0xAA000000),
-                      blurRadius: 2,
-                      offset: Offset(0, 1)),
-                ],
               ),
             ),
           ),

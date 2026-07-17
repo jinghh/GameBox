@@ -31,6 +31,7 @@ class Tank {
   int hp = 1; // Boss=50 / 小Boss=3(其它种类忽略)
   double bombTimer = 0; // Boss 阶段3 扔炸弹倒计时
   double hitFlashTime = 0; // 受击闪烁剩余时间(秒)
+  double miniBurstTimer = 0; // 小Boss 连发第二弹延迟(秒)
 
   Tank({
     required this.pos,
