@@ -17,7 +17,7 @@ class HomePage extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('经典小游戏',
+            const Text('GAMEBOX',
                 style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold)),
             const SizedBox(height: 1),
             Text('${kGames.length} 款 · 纯单机离线',

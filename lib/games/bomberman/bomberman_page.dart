@@ -723,7 +723,12 @@ class _BomberPageState extends State<BomberPage>
       ..row = rr
       ..dir = null
       ..t = 0
-      ..invuln = _kInvuln;
+      ..invuln = _kInvuln
+      // 死亡复活:加成恢复初始,避免越死越强、跨命累加
+      ..maxBombs = 1
+      ..flameRange = 2
+      ..speed = _kPlayerSpeed
+      ..activeBombs = 0;
     _held.clear();
     setState(() {});
   }
@@ -836,28 +841,40 @@ class _BomberPageState extends State<BomberPage>
                         ? Offset((_rng.nextDouble() - 0.5) * cell * 0.28,
                             (_rng.nextDouble() - 0.5) * cell * 0.28)
                         : Offset.zero,
-                    child: SizedBox(
-                      width: boardW,
-                      height: boardH,
-                      child: Stack(
-                        children: [
-                          CustomPaint(
-                            size: Size(boardW, boardH),
-                            painter: _BomberPainter(
-                              grid: _grid,
-                              player: _player,
-                              enemies: _enemies,
-                              bombs: _bombs,
-                              flame: _flame,
-                              powers: _powers,
-                              vfx: _vfx,
-                              cell: cell,
-                              repaint: _repaint,
-                            ),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(6),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.45),
+                            blurRadius: 18,
+                            offset: const Offset(0, 6),
                           ),
-                          if (!_started || _over || _paused || _cleared)
-                            _overlay(),
                         ],
+                      ),
+                      child: SizedBox(
+                        width: boardW,
+                        height: boardH,
+                        child: Stack(
+                          children: [
+                            CustomPaint(
+                              size: Size(boardW, boardH),
+                              painter: _BomberPainter(
+                                grid: _grid,
+                                player: _player,
+                                enemies: _enemies,
+                                bombs: _bombs,
+                                flame: _flame,
+                                powers: _powers,
+                                vfx: _vfx,
+                                cell: cell,
+                                repaint: _repaint,
+                              ),
+                            ),
+                            if (!_started || _over || _paused || _cleared)
+                              _overlay(),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -894,20 +911,35 @@ class _BomberPageState extends State<BomberPage>
 
   Widget _chip(String label, String value, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: const Color(0xFF262626),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.45), width: 1),
+        gradient: const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF2C2C2C), Color(0xFF1A1A1A)],
+        ),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.55), width: 1),
+        boxShadow: [
+          BoxShadow(
+              color: color.withValues(alpha: 0.18),
+              blurRadius: 6,
+              offset: const Offset(0, 2)),
+        ],
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text('$label ',
-              style: const TextStyle(color: Color(0xFF999999), fontSize: 10)),
+              style: const TextStyle(color: Color(0xFF9A9A9A), fontSize: 10)),
           Text(value,
               style: TextStyle(
-                  color: color, fontSize: 13, fontWeight: FontWeight.bold)),
+                  color: color,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  shadows: [
+                    Shadow(color: color.withValues(alpha: 0.6), blurRadius: 4)
+                  ])),
         ],
       ),
     );
@@ -916,7 +948,13 @@ class _BomberPageState extends State<BomberPage>
   Widget _overlay() {
     return Positioned.fill(
       child: Container(
-        color: const Color(0xCC000000),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xE6000000), Color(0xF2000000)],
+          ),
+        ),
         alignment: Alignment.center,
         padding: const EdgeInsets.symmetric(horizontal: 24),
         child: Column(
@@ -927,7 +965,10 @@ class _BomberPageState extends State<BomberPage>
                   style: const TextStyle(
                       color: Color(0xFFFFD54A),
                       fontSize: 22,
-                      fontWeight: FontWeight.bold)),
+                      fontWeight: FontWeight.bold,
+                      shadows: [
+                        Shadow(color: Color(0xFFFFD54A), blurRadius: 18)
+                      ])),
               const SizedBox(height: 6),
               Text('+500 分 · 当前 $_score',
                   style: const TextStyle(color: Colors.white70, fontSize: 13)),
@@ -938,7 +979,10 @@ class _BomberPageState extends State<BomberPage>
                   style: TextStyle(
                       color: Colors.white,
                       fontSize: 26,
-                      fontWeight: FontWeight.bold)),
+                      fontWeight: FontWeight.bold,
+                      shadows: [
+                        Shadow(color: Color(0xFFFF5252), blurRadius: 18)
+                      ])),
               const SizedBox(height: 8),
               Text('到达第 $_level 关 · 得分 $_score · 最高 $_best',
                   style: const TextStyle(color: Colors.white70, fontSize: 13)),
@@ -949,7 +993,10 @@ class _BomberPageState extends State<BomberPage>
                   style: TextStyle(
                       color: Colors.white,
                       fontSize: 26,
-                      fontWeight: FontWeight.bold)),
+                      fontWeight: FontWeight.bold,
+                      shadows: [
+                        Shadow(color: Color(0xFFFF8A4C), blurRadius: 18)
+                      ])),
               const SizedBox(height: 14),
               _ovBtn('继续游戏', const Color(0xFFFF8A4C), _togglePause),
             ] else ...[
@@ -957,7 +1004,10 @@ class _BomberPageState extends State<BomberPage>
                   style: TextStyle(
                       color: Color(0xFFFF8A4C),
                       fontSize: 28,
-                      fontWeight: FontWeight.bold)),
+                      fontWeight: FontWeight.bold,
+                      shadows: [
+                        Shadow(color: Color(0xFFFF8A4C), blurRadius: 20)
+                      ])),
               const SizedBox(height: 10),
               const Text('方向键移动 · 炸弹键放雷\n炸掉所有敌人即可过关',
                   textAlign: TextAlign.center,
@@ -1005,21 +1055,25 @@ class _BomberPageState extends State<BomberPage>
               width: btn * 1.5,
               height: btn * 1.5,
               decoration: BoxDecoration(
-                color: const Color(0xFF262626),
                 shape: BoxShape.circle,
+                gradient: const RadialGradient(
+                  center: Alignment(-0.3, -0.3),
+                  radius: 0.9,
+                  colors: [Color(0xFF3A2A26), Color(0xFF171717)],
+                ),
                 border:
                     Border.all(color: const Color(0xFFFF7043), width: 2.5),
                 boxShadow: const [
                   BoxShadow(
-                      color: Color(0x55FF7043), blurRadius: 10, offset: Offset(0, 3)),
+                      color: Color(0x66FF7043), blurRadius: 14, offset: Offset(0, 3)),
                 ],
               ),
               alignment: Alignment.center,
-              child: Column(
+              child: const Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('💣', style: TextStyle(fontSize: 30)),
-                  const Text('放雷',
+                  Text('💣', style: TextStyle(fontSize: 30)),
+                  Text('放雷',
                       style: TextStyle(
                           color: Color(0xFFFF7043),
                           fontSize: 12,
@@ -1044,7 +1098,7 @@ class _BomberPageState extends State<BomberPage>
   }
 }
 
-/// 泡泡堂绘制:地面/钢墙/砖块/道具/炸弹/火焰/敌人/玩家。
+/// 泡泡堂绘制:地面/钢墙/砖块/道具/炸弹/火焰/敌人/玩家。霓虹抛光风。
 class _BomberPainter extends CustomPainter {
   final List<List<int>> grid;
   final _Player player;
@@ -1052,7 +1106,10 @@ class _BomberPainter extends CustomPainter {
   final Map<int, _Bomb> bombs;
   final Map<int, double> flame;
   final List<_PowerUp> powers;
+  final List<_Vfx> vfx;
   final double cell;
+  final ValueNotifier<int> _tick; // 帧计数,驱动道具脉冲等动画
+
   _BomberPainter({
     required this.grid,
     required this.player,
@@ -1062,15 +1119,16 @@ class _BomberPainter extends CustomPainter {
     required this.powers,
     required this.cell,
     this.vfx = const [],
-    super.repaint,
-  });
-  final List<_Vfx> vfx;
+    required ValueNotifier<int> repaint,
+  })  : _tick = repaint,
+        super(repaint: repaint);
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 地面
+    final w = size.width, h = size.height;
+    // 地面双色棋盘
     final floorA = Paint()..color = const Color(0xFF2E7D32);
-    final floorB = Paint()..color = const Color(0xFF266A2A);
+    final floorB = Paint()..color = const Color(0xFF256B29);
     for (int r = 0; r < _rows; r++) {
       for (int c = 0; c < _cols; c++) {
         canvas.drawRect(
@@ -1079,49 +1137,45 @@ class _BomberPainter extends CustomPainter {
         );
       }
     }
-    // 钢墙/砖块
-    final steel = Paint()..color = const Color(0xFF8E9AAB);
-    final steelDark = Paint()..color = const Color(0xFF5C6776);
-    final crate = Paint()..color = const Color(0xFFC98A45);
-    final crateDark = Paint()..color = const Color(0xFF7A4E20);
+    // 地面格线
+    final gridLine = Paint()
+      ..color = const Color(0x15000000)
+      ..strokeWidth = 1;
+    for (int r = 0; r <= _rows; r++) {
+      canvas.drawLine(Offset(0, r * cell), Offset(w, r * cell), gridLine);
+    }
+    for (int c = 0; c <= _cols; c++) {
+      canvas.drawLine(Offset(c * cell, 0), Offset(c * cell, h), gridLine);
+    }
+    // 钢墙 / 砖块
     for (int r = 0; r < _rows; r++) {
       for (int c = 0; c < _cols; c++) {
         final v = grid[r][c];
         if (v == 2) {
-          _roundRect(canvas, c * cell, r * cell, cell, cell, cell * 0.12,
-              steel);
-          canvas.drawRect(
-            Rect.fromLTWH(
-                c * cell + cell * 0.18, r * cell + cell * 0.18, cell * 0.64, cell * 0.64),
-            steelDark,
-          );
+          _drawSteel(canvas, c * cell, r * cell, cell);
         } else if (v == 1) {
-          _roundRect(canvas, c * cell + 1, r * cell + 1, cell - 2, cell - 2,
-              cell * 0.14, crate);
-          // 砖纹
-          canvas.drawLine(
-              Offset(c * cell + 1, r * cell + cell * 0.5),
-              Offset(c * cell + cell - 1, r * cell + cell * 0.5),
-              crateDark..strokeWidth = 1);
+          _drawCrate(canvas, c * cell, r * cell, cell);
         }
       }
     }
-    // 道具
+    // 道具(脉冲发光)
+    final phase = (_tick.value % 60) / 60.0;
     for (final p in powers) {
-      _drawPower(canvas, p);
+      _drawPower(canvas, p, phase);
     }
     // 敌人
     for (final e in enemies) {
       if (!e.alive) continue;
-      _drawBlob(canvas, e.posOf(cell), cell, e.color, false, e.dir);
+      _drawBlob(canvas, e.posOf(cell), cell, e.color, false, e.dir,
+          shadow: true, angry: e.type == _EnemyType.chaser);
     }
     // 玩家
     if (player.alive) {
-      final blink = player.invuln > 0 &&
-          (player.invuln * 10).floor() % 2 == 0;
+      final blink = player.invuln > 0 && (player.invuln * 10).floor() % 2 == 0;
       if (!blink) {
-        _drawBlob(canvas, player.posOf(cell), cell,
-            const Color(0xFF42A5F5), true, player.dir);
+        _drawBlob(canvas, player.posOf(cell), cell, const Color(0xFF42A5F5),
+            true, player.dir,
+            shadow: true);
       }
     }
     // 炸弹(画在玩家上面,确保脚下的雷清晰可见)
@@ -1133,11 +1187,10 @@ class _BomberPainter extends CustomPainter {
       final r = k ~/ _cols, c = k % _cols;
       _drawFlame(canvas, c * cell, r * cell, cell, v);
     });
-    // VFX 特效:死亡弹开 / 得分飘字
+    // VFX:死亡弹开 / 得分飘字
     for (final v in vfx) {
       final a = (v.timer / 0.40).clamp(0.0, 1.0);
       if (v.score != null) {
-        // 得分飘字:上浮 + 淡出
         final tp = TextPainter(
           text: TextSpan(
               text: '+${v.score}',
@@ -1152,30 +1205,126 @@ class _BomberPainter extends CustomPainter {
         tp.paint(canvas,
             Offset(v.cx * cell - tp.width / 2, v.cy * cell - rise - tp.height));
       } else {
-        // 死亡弹开:扩散圆
         final r = cell * 0.10 + (1 - a) * cell * 0.30;
         canvas.drawCircle(Offset(v.cx * cell, v.cy * cell), r,
             Paint()..color = const Color(0xFFFFFFFF).withValues(alpha: a * 0.7));
       }
     }
+    // 暗角(增加纵深感)
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w, h),
+      Paint()
+        ..shader = RadialGradient(
+          center: Alignment.center,
+          radius: 0.85,
+          colors: const [
+            Color(0x00000000),
+            Color(0x00000000),
+            Color(0x55000000),
+          ],
+          stops: const [0.0, 0.65, 1.0],
+        ).createShader(Rect.fromLTWH(0, 0, w, h)),
+    );
   }
 
-  void _roundRect(Canvas canvas, double x, double y, double w, double h,
-      double r, Paint p) {
-    canvas.drawRRect(
-        RRect.fromRectAndRadius(Rect.fromLTWH(x, y, w, h), Radius.circular(r)),
-        p);
+  // ---- 钢墙:金属斜面 + 铆钉 ----
+  void _drawSteel(Canvas canvas, double x, double y, double s) {
+    final outer = Rect.fromLTWH(x + 1, y + 1, s - 2, s - 2);
+    const rad = Radius.circular(2);
+    canvas.drawRRect(RRect.fromRectAndRadius(outer, rad),
+        Paint()..color = const Color(0xFF5B6770));
+    final inner = outer.deflate(s * 0.10);
+    canvas.drawRRect(RRect.fromRectAndRadius(inner, rad),
+        Paint()..color = const Color(0xFF9AA7B6));
+    // 左上高光弧
+    canvas.drawArc(
+        inner,
+        pi * 1.12,
+        pi * 0.6,
+        false,
+        Paint()
+          ..color = Colors.white.withValues(alpha: 0.32)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = s * 0.07);
+    // 右下暗边
+    canvas.drawArc(
+        inner,
+        pi * 0.12,
+        pi * 0.5,
+        false,
+        Paint()
+          ..color = const Color(0xFF3A434C)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = s * 0.07);
+    // 四角铆钉
+    final rp = s * 0.05;
+    final pad = s * 0.20;
+    final rivet = Paint()..color = const Color(0xFF3C4450);
+    for (final (rx, ry) in [
+      (inner.left + pad, inner.top + pad),
+      (inner.right - pad, inner.top + pad),
+      (inner.left + pad, inner.bottom - pad),
+      (inner.right - pad, inner.bottom - pad),
+    ]) {
+      canvas.drawCircle(Offset(rx, ry), rp, rivet);
+    }
   }
 
-  void _drawPower(Canvas canvas, _PowerUp p) {
+  // ---- 砖块:木箱纹 + 斜面 ----
+  void _drawCrate(Canvas canvas, double x, double y, double s) {
+    final outer = Rect.fromLTWH(x + 1, y + 1, s - 2, s - 2);
+    final rad = Radius.circular(s * 0.14);
+    canvas.drawRRect(RRect.fromRectAndRadius(outer, rad),
+        Paint()..color = const Color(0xFF5E3A1A));
+    final inner = outer.deflate(s * 0.09);
+    canvas.drawRRect(RRect.fromRectAndRadius(inner, rad),
+        Paint()..color = const Color(0xFFCC8B45));
+    // 木板中缝
+    final mid = inner.top + inner.height / 2;
+    canvas.drawLine(
+        Offset(inner.left, mid),
+        Offset(inner.right, mid),
+        Paint()
+          ..color = const Color(0xFF7A4E20)
+          ..strokeWidth = 1.2);
+    // 左上高光
+    canvas.drawArc(
+        inner,
+        pi * 1.12,
+        pi * 0.6,
+        false,
+        Paint()
+          ..color = Colors.white.withValues(alpha: 0.22)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = s * 0.06);
+  }
+
+  void _drawPower(Canvas canvas, _PowerUp p, double phase) {
     final cx = p.col * cell + cell / 2, cy = p.row * cell + cell / 2;
-    final r = cell * 0.3;
+    final pulse = 0.5 + 0.5 * sin(phase * 2 * pi);
     final color = switch (p.kind) {
       _Power.bomb => const Color(0xFFFFCA28),
       _Power.flame => const Color(0xFFFF7043),
       _Power.speed => const Color(0xFF42A5F5),
     };
+    // 发光晕
+    canvas.drawCircle(
+      Offset(cx, cy),
+      cell * (0.34 + 0.07 * pulse),
+      Paint()..color = color.withValues(alpha: 0.16 + 0.16 * pulse),
+    );
+    // 主体
+    final r = cell * 0.30;
     canvas.drawCircle(Offset(cx, cy), r, Paint()..color = color);
+    canvas.drawCircle(
+      Offset(cx, cy),
+      r,
+      Paint()
+        ..color = Colors.white.withValues(alpha: 0.85)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6,
+    );
+    // 字母
     final letter = switch (p.kind) {
       _Power.bomb => 'B',
       _Power.flame => 'F',
@@ -1184,9 +1333,9 @@ class _BomberPainter extends CustomPainter {
     final tp = TextPainter(
       text: TextSpan(
           text: letter,
-          style: const TextStyle(
-              color: Color(0xFF222222),
-              fontSize: 13,
+          style: TextStyle(
+              color: const Color(0xFF222222),
+              fontSize: cell * 0.42,
               fontWeight: FontWeight.bold)),
       textAlign: TextAlign.center,
       textDirection: TextDirection.ltr,
@@ -1200,46 +1349,114 @@ class _BomberPainter extends CustomPainter {
     final pulse = 1 + (1 - (b.fuse / _kFuse).clamp(0.0, 1.0)) * 0.18;
     final blink = b.fuse < 0.6 && (b.fuse * 12).floor() % 2 == 0;
     final r = cell * 0.32 * pulse;
-    canvas.drawCircle(Offset(cx, cy), r,
-        Paint()..color = blink ? const Color(0xFFFF5252) : const Color(0xFF202020));
+    // 地面阴影
+    canvas.drawOval(
+      Rect.fromCenter(
+          center: Offset(cx, cy + r * 0.75), width: r * 1.8, height: r * 0.7),
+      Paint()..color = const Color(0x55000000),
+    );
+    // 球体
     canvas.drawCircle(
-        Offset(cx - r * 0.3, cy - r * 0.3),
-        r * 0.28,
-        Paint()..color = const Color(0xFF666666));
-    // 引信火星
-    canvas.drawCircle(Offset(cx + r * 0.5, cy - r * 0.7), cell * 0.06,
+      Offset(cx, cy),
+      r,
+      Paint()..color = blink ? const Color(0xFFFF5252) : const Color(0xFF1F1F1F),
+    );
+    // 球面高光
+    canvas.drawCircle(
+      Offset(cx, cy),
+      r,
+      Paint()
+        ..shader = RadialGradient(
+          center: const Alignment(-0.5, -0.5),
+          radius: 0.7,
+          colors: [
+            Colors.white.withValues(alpha: 0.5),
+            Colors.white.withValues(alpha: 0.0),
+          ],
+        ).createShader(Rect.fromCircle(center: Offset(cx, cy), radius: r)),
+    );
+    // 引信 + 火星
+    final fuseEnd = Offset(cx + r * 0.55, cy - r * 0.85);
+    canvas.drawLine(
+      Offset(cx + r * 0.25, cy - r * 0.55),
+      fuseEnd,
+      Paint()
+        ..color = const Color(0xFF8D6E63)
+        ..strokeWidth = cell * 0.06
+        ..strokeCap = StrokeCap.round,
+    );
+    canvas.drawCircle(fuseEnd, cell * 0.075,
         Paint()..color = const Color(0xFFFFD54A));
+    canvas.drawCircle(fuseEnd, cell * 0.13,
+        Paint()..color = const Color(0x66FF7043));
   }
 
-  void _drawFlame(Canvas canvas, double x, double y, double cellSize, double v) {
+  void _drawFlame(Canvas canvas, double x, double y, double s, double v) {
     final a = (v / _kFlameTime).clamp(0.0, 1.0);
+    // 外焰
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(x + 2, y + 2, cellSize - 4, cellSize - 4),
-        Radius.circular(cellSize * 0.2),
+        Rect.fromLTWH(x + 1, y + 1, s - 2, s - 2),
+        Radius.circular(s * 0.22),
       ),
-      Paint()..color = const Color(0xFFFFCA28).withValues(alpha: 0.55 + 0.35 * a),
+      Paint()..color = const Color(0xFFFF6A00).withValues(alpha: 0.45 + 0.35 * a),
     );
+    // 中焰
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(x + cellSize * 0.22, y + cellSize * 0.22,
-            cellSize * 0.56, cellSize * 0.56),
-        Radius.circular(cellSize * 0.18),
+        Rect.fromLTWH(x + s * 0.16, y + s * 0.16, s * 0.68, s * 0.68),
+        Radius.circular(s * 0.2),
       ),
-      Paint()..color = const Color(0xFFFF5252).withValues(alpha: 0.5 + 0.4 * a),
+      Paint()..color = const Color(0xFFFFC107).withValues(alpha: 0.6 + 0.35 * a),
+    );
+    // 内核
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(x + s * 0.32, y + s * 0.32, s * 0.36, s * 0.36),
+        Radius.circular(s * 0.14),
+      ),
+      Paint()..color = const Color(0xFFFFF59D).withValues(alpha: 0.75 + 0.25 * a),
     );
   }
 
-  void _drawBlob(Canvas canvas, Offset center, double cellSize, Color color,
-      bool isPlayer, SwipeDir? dir) {
-    final r = cellSize * 0.36;
-    // 身体
-    canvas.drawCircle(center, r, Paint()..color = color);
-    canvas.drawCircle(center, r,
-        Paint()
-          ..color = Colors.white.withValues(alpha: 0.18)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2);
+  void _drawBlob(Canvas canvas, Offset center, double s, Color color,
+      bool isPlayer, SwipeDir? dir,
+      {bool shadow = false, bool angry = false}) {
+    final r = s * 0.36;
+    if (shadow) {
+      canvas.drawOval(
+        Rect.fromCenter(
+            center: Offset(center.dx, center.dy + r * 0.85),
+            width: r * 1.7,
+            height: r * 0.6),
+        Paint()..color = const Color(0x44000000),
+      );
+    }
+    // 身体径向(顶亮底暗,有体积感)
+    canvas.drawCircle(
+      center,
+      r,
+      Paint()
+        ..shader = RadialGradient(
+          center: const Alignment(-0.3, -0.4),
+          radius: 0.95,
+          colors: [
+            _lighten(color, 0.4),
+            color,
+            _darken(color, 0.28),
+          ],
+          stops: const [0.0, 0.55, 1.0],
+        ).createShader(Rect.fromCircle(center: center, radius: r)),
+    );
+    // 外发光描边
+    canvas.drawCircle(
+      center,
+      r,
+      Paint()
+        ..color = Colors.white.withValues(alpha: 0.28)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
     // 眼睛朝向
     double ex = 0, ey = -r * 0.1;
     double lookx = 0, looky = 0;
@@ -1268,9 +1485,9 @@ class _BomberPainter extends CustomPainter {
     final (px, py) = dir == SwipeDir.left || dir == SwipeDir.right
         ? (0.0, 1.0)
         : (1.0, 0.0);
-    for (final s in const [-1.0, 1.0]) {
-      final eyeX = center.dx + ex + px * sep * s;
-      final eyeY = center.dy + ey + py * sep * s;
+    for (final sgn in const [-1.0, 1.0]) {
+      final eyeX = center.dx + ex + px * sep * sgn;
+      final eyeY = center.dy + ey + py * sep * sgn;
       canvas.drawCircle(Offset(eyeX, eyeY), r * 0.2,
           Paint()..color = Colors.white);
       canvas.drawCircle(
@@ -1278,15 +1495,50 @@ class _BomberPainter extends CustomPainter {
           r * 0.1,
           Paint()..color = const Color(0xFF111111));
     }
+    // 追击型敌人:怒眉
+    if (angry) {
+      final brow = Paint()
+        ..color = const Color(0xFF2A0000)
+        ..strokeWidth = r * 0.12
+        ..strokeCap = StrokeCap.round;
+      for (final sgn in const [-1.0, 1.0]) {
+        final eyeX = center.dx + ex + px * sep * sgn;
+        final eyeY = center.dy + ey + py * sep * sgn;
+        canvas.drawLine(
+            Offset(eyeX - r * 0.2, eyeY - r * 0.24),
+            Offset(eyeX + r * 0.16, eyeY - r * 0.06),
+            brow);
+      }
+    }
     if (isPlayer) {
-      // 头顶天线小点
-      canvas.drawCircle(Offset(center.dx, center.dy - r * 1.05), cellSize * 0.05,
+      // 头顶天线 + 发光端
+      canvas.drawCircle(Offset(center.dx, center.dy - r * 1.05), s * 0.11,
+          Paint()..color = const Color(0x55FFD54A));
+      canvas.drawCircle(Offset(center.dx, center.dy - r * 1.05), s * 0.06,
           Paint()..color = const Color(0xFFFFD54A));
     }
   }
 
   @override
   bool shouldRepaint(covariant _BomberPainter old) => true;
+}
+
+Color _lighten(Color c, double amt) {
+  return Color.fromARGB(
+    (c.a * 255).round().clamp(0, 255),
+    ((c.r + (1 - c.r) * amt) * 255).round().clamp(0, 255),
+    ((c.g + (1 - c.g) * amt) * 255).round().clamp(0, 255),
+    ((c.b + (1 - c.b) * amt) * 255).round().clamp(0, 255),
+  );
+}
+
+Color _darken(Color c, double amt) {
+  return Color.fromARGB(
+    (c.a * 255).round().clamp(0, 255),
+    (c.r * (1 - amt) * 255).round().clamp(0, 255),
+    (c.g * (1 - amt) * 255).round().clamp(0, 255),
+    (c.b * (1 - amt) * 255).round().clamp(0, 255),
+  );
 }
 
 // ---- 虚拟摇杆(仿坦克,拖动控制四向) ----

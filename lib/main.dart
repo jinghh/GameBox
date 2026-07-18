@@ -26,7 +26,7 @@ class MiniGamesApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '经典小游戏',
+      title: 'GAMEBOX',
       debugShowCheckedModeBanner: false,
       theme: kAppTheme,
       home: const HomePage(),
