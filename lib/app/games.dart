@@ -6,6 +6,7 @@ import '../games/gomoku/gomoku_page.dart';
 import '../games/minesweeper/minesweeper_page.dart';
 import '../games/snake/snake_page.dart';
 import '../games/tank/battle_city_game.dart';
+import '../games/tank/net/bt_room_page.dart';
 import '../games/tetris/tetris_page.dart';
 
 /// 一个可插拔游戏的描述。
@@ -43,6 +44,14 @@ final List<GameSpec> kGames = [
     emoji: '🛡️',
     accent: const Color(0xFFFFD54A),
     builder: (_) => const BattleCityGame(),
+  ),
+  GameSpec(
+    id: 'tank_online',
+    title: '坦克联机',
+    subtitle: '蓝牙·双人闯关',
+    emoji: '📶',
+    accent: const Color(0xFF4CAF50),
+    builder: (_) => const TankBtRoomPage(),
   ),
   GameSpec(
     id: 'g2048',

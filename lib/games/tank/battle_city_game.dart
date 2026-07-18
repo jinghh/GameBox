@@ -2,6 +2,7 @@
 // 控制：左半屏拖动 = 虚拟摇杆（4 向移动）；右下按钮 = 开火（按下即时发射，按住连发）。
 // 双人合作：P1 左半屏、P2 右半屏，各自摇杆 + 开火；共享生命与得分。
 
+import 'dart:async';
 import 'dart:io' show ProcessInfo;
 import 'dart:math';
 
@@ -15,10 +16,23 @@ import 'maps.dart';
 import 'models.dart';
 import 'painter.dart';
 import 'sound.dart';
+import 'net/wire.dart';
 import '../../shared/bgm_synth.dart';
+import '../../shared/net/p2p_link.dart';
 
 class BattleCityGame extends StatefulWidget {
-  const BattleCityGame({super.key});
+  /// 联机链路:非 null 时启用 host/guest 分支;默认 null = 纯单机(零影响)。
+  final P2pLink? link;
+  final NetRole role;
+  /// 联机 host 进入后自动开局(供联机入口使用);单机默认 false 不受影响。
+  final bool autoStart;
+
+  const BattleCityGame({
+    super.key,
+    this.link,
+    this.role = NetRole.offline,
+    this.autoStart = false,
+  });
 
   @override
   State<BattleCityGame> createState() => _BattleCityGameState();
@@ -90,6 +104,18 @@ class _BattleCityGameState extends State<BattleCityGame>
   late final Ticker _ticker;
   Duration? _lastElapsed;
 
+  // ---- 联机(阶段1:本地回环)----
+  late NetRole _role; // offline / host / guest
+  P2pLink? _link;
+  StreamSubscription<Uint8List>? _rx; // 收包订阅
+  Snapshot? _pending; // guest:待应用的最近一帧 host 快照
+  Dir? _remoteDir; // host:收到的 guest 输入(玩家1)
+  bool _remoteFire = false;
+  int _enemyRemaining = 0; // guest HUD 剩余敌人(由快照提供)
+  int _gridSeq = 0; // host:地形版本,_bumpTerrain 时 +1;快照下发给 guest
+  int _lastGridSeq = -1; // guest:上次应用的地形版本(相同则跳过地形重绘)
+  int _netFrame = 0; // host:下行隔帧计数(~30Hz)
+
   // ---- 生命周期 ----
   @override
   void initState() {
@@ -117,10 +143,23 @@ class _BattleCityGameState extends State<BattleCityGame>
     _sound.init();
     _bgm = ChiptuneBgm(theme: BgmTheme.march);
     _bgm.init();
+    // 联机:默认 offline(link==null)时下面是 no-op,不影响单机。
+    _role = widget.role;
+    _link = widget.link;
+    _rx = _link?.incoming.listen(_onPacket);
+    if (widget.autoStart) {
+      // host 进入后自动开局(twoPlayer=true 以生成 P2 坦克供 guest 控;
+      // 控件布局由 _buildControls 在 host 模式下强制为单人)。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) startGame(twoPlayer: true);
+      });
+    }
   }
 
   @override
   void dispose() {
+    _rx?.cancel();
+    _link?.close(); // 异步关闭,fire-and-forget
     _ticker.dispose();
     _focus.dispose();
     _sound.dispose();
@@ -221,6 +260,7 @@ class _BattleCityGameState extends State<BattleCityGame>
   /// 地形变化：通知静态地形层按需重绘（不触发 widget 重建）。
   void _bumpTerrain() {
     _terrainRepaint.value = _terrainRepaint.value + 1;
+    _gridSeq = (_gridSeq + 1) & 0xFF; // 递增地形版本,供 guest 判断是否需重绘
   }
 
   /// 预计算本关全部树丛格的世界矩形，供实体层直接遍历绘制。
@@ -317,15 +357,24 @@ class _BattleCityGameState extends State<BattleCityGame>
 
     switch (phase) {
       case Phase.playing:
-        _perf.updateSw.start();
-        update(dt);
-        _perf.updateSw.stop();
-        _perf.lastUpdateUs = _perf.updateSw.elapsedMicroseconds;
-        _perf.updateSw.reset();
+        if (_role != NetRole.guest) {
+          _perf.updateSw.start();
+          update(dt); // offline / host:原样推进
+          _perf.updateSw.stop();
+          _perf.lastUpdateUs = _perf.updateSw.elapsedMicroseconds;
+          _perf.updateSw.reset();
+          if (_role == NetRole.host) {
+            _applyRemoteInput(); // guest 上行的输入写入 _dir2/_fire2
+          }
+        }
+        // guest:不跑逻辑,状态由下方 _drainPendingSnapshot 从快照覆盖
         break;
       case Phase.levelClear:
-        _levelClearTimer -= dt;
-        if (_levelClearTimer <= 0) _advanceLevel();
+        if (_role != NetRole.guest) {
+          _levelClearTimer -= dt;
+          if (_levelClearTimer <= 0) _advanceLevel();
+        }
+        // guest:不自主切关,phase 由快照驱动
         break;
       case Phase.start:
       case Phase.paused:
@@ -336,6 +385,14 @@ class _BattleCityGameState extends State<BattleCityGame>
         break;
     }
     if (!mounted) return;
+
+    // ---- 联机收发（offline 时 _link==null,以下均不执行）----
+    if (_role == NetRole.guest) {
+      _drainPendingSnapshot(); // 任何阶段都应用快照（含 phase 切换）
+      if (phase == Phase.playing) _sendInput();
+    } else if (_role == NetRole.host && phase != Phase.start) {
+      _sendSnapshot(); // 广播当前状态（含 phase 变化）给 guest
+    }
 
     // 阶段切换后仍让残留爆炸播完（如基地被毁 → GameOver）；暂停/菜单时冻结。
     final advanceFx = phase == Phase.gameOver ||
@@ -1241,6 +1298,8 @@ class _BattleCityGameState extends State<BattleCityGame>
   }
 
   void _onPrimaryTap() {
+    // guest 不自主切阶段(重开/继续由 host 权威驱动),避免与 host 状态分叉。
+    if (_role == NetRole.guest) return;
     switch (phase) {
       case Phase.paused:
         phase = Phase.playing;
@@ -1369,7 +1428,8 @@ class _BattleCityGameState extends State<BattleCityGame>
   }
 
   List<Widget> _buildControls(double w, double h) {
-    if (_twoPlayer) {
+    // 联机 host:本地只控 P1(单人控件),P2 由远端 guest 经网络驱动。
+    if (_twoPlayer && _role != NetRole.host) {
       // 双人对角镜像：P1 摇杆左上 / 开火左下；P2 摇杆右下 / 开火右上。
       // 两位玩家分坐左右、面对面时，各自控件位置正好与对方相反、且都符合"左手摇杆、右手开火"。
       return [
@@ -1405,7 +1465,10 @@ class _BattleCityGameState extends State<BattleCityGame>
 
   // ---- HUD ----
   Widget _buildHud() {
-    final remaining = _queue.isEmpty ? 0 : (_queue.length - _killed);
+    // guest 不刷怪(无 _queue/_killed),用 host 快照提供的剩余计数。
+    final remaining = _role == NetRole.guest
+        ? _enemyRemaining
+        : (_queue.isEmpty ? 0 : (_queue.length - _killed));
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 6, 8, 6),
       decoration: const BoxDecoration(
@@ -1609,8 +1672,41 @@ class _BattleCityGameState extends State<BattleCityGame>
   }
 
   // ---- 覆盖层 ----
+  /// guest 在 host 开局前的等待层(host 处于 start 阶段时不发快照)。
+  Widget _buildGuestWaiting() {
+    return Container(
+      color: const Color(0xCC000000),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 28),
+      child: const Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.bluetooth, color: Color(0xFFFFD54A), size: 40),
+          SizedBox(height: 14),
+          Text('联机模式 · 客机',
+              style: TextStyle(
+                  color: Color(0xFFFFD54A),
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  fontFamily: 'monospace',
+                  decoration: TextDecoration.none)),
+          SizedBox(height: 8),
+          Text('等待主机开始游戏…',
+              style: TextStyle(
+                  color: Color(0xFFAAAAAA),
+                  fontSize: 13,
+                  fontFamily: 'monospace',
+                  decoration: TextDecoration.none)),
+        ],
+      ),
+    );
+  }
+
   Widget _buildOverlay() {
-    if (phase == Phase.start) return _buildStartMenu();
+    if (phase == Phase.start) {
+      // guest 不显示自己的开始菜单(避免误操作),只等 host 开局后由快照驱动。
+      return _role == NetRole.guest ? _buildGuestWaiting() : _buildStartMenu();
+    }
     if (phase == Phase.levelClear) return _buildLevelClear();
     if (phase == Phase.paused) return _buildPausePanel();
     if (phase == Phase.victory) return _buildVictory();
@@ -2047,6 +2143,129 @@ class _BattleCityGameState extends State<BattleCityGame>
   }
 
   double _easeOutCubic(double t) => (1 - pow(1 - t, 3)).toDouble();
+
+  // ======================== 联机收发（阶段1：本地回环）========================
+  // offline（_link==null）时:以下方法均不会被调用——_onTick 的 if(_role==...)
+  // 分叉会跳过,initState 也没 listen。单机模式零影响。
+
+  /// 收到一个网络消息包,按类型分派。
+  void _onPacket(Uint8List bytes) {
+    if (bytes.isEmpty) return;
+    switch (bytes[0]) {
+      case kMsgSnapshot:
+        if (_role == NetRole.guest) {
+          _pending = Snapshot.fromBytes(bytes);
+        }
+        break;
+      case kMsgInput:
+        if (_role == NetRole.host) {
+          final f = InputFrame.fromBytes(bytes);
+          if (f != null) {
+            _remoteDir = f.dir;
+            _remoteFire = f.fire;
+          }
+        }
+        break;
+    }
+  }
+
+  /// guest:应用最近一帧 host 快照(若有)。
+  void _drainPendingSnapshot() {
+    final s = _pending;
+    if (s == null) return;
+    _pending = null;
+    _applySnapshot(s);
+  }
+
+  /// guest:把 host 快照覆盖到本地 _scene。
+  /// 5 个实体 List 原地 clear+addAll,保持 _scene 持有的引用不变(渲染层零改动)。
+  void _applySnapshot(Snapshot s) {
+    phase = s.phase;
+    score = s.score;
+    lives = s.lives;
+    level = s.level;
+    _isBossLevel = s.isBossLevel;
+    baseAlive = s.baseAlive;
+    _bossHpShown = s.bossHpShown;
+    _miniRemaining = s.miniRemaining;
+    _enemyRemaining = s.enemyRemaining;
+    _freezeTime = s.freezeActive ? 1 : 0; // 非零即冻结态(供 _onTick 行 353 同步)
+    _time = s.time;
+
+    // 地形:仅当版本变化(砖墙/装甲改变/切关)才替换 grid + 重建树丛 + 重绘地形。
+    // 客机不再每帧全量重绘地形(原先的卡顿主因)。
+    if (s.gridSeq != _lastGridSeq) {
+      _lastGridSeq = s.gridSeq;
+      grid = s.grid;
+      _scene.grid = grid;
+      _rebuildTreeRects();
+      _terrainRepaint.value = _terrainRepaint.value + 1;
+    }
+
+    players
+      ..clear()
+      ..addAll(s.players);
+    enemies
+      ..clear()
+      ..addAll(s.enemies);
+    bullets
+      ..clear()
+      ..addAll(s.bullets);
+    powerups
+      ..clear()
+      ..addAll(s.powerups);
+    explosions
+      ..clear()
+      ..addAll(s.explosions);
+
+    _scene.baseAlive = baseAlive;
+    _scene.time = _time;
+    _scene.freezeActive = s.freezeActive;
+
+    _frameRepaint.value = _frameRepaint.value + 1; // 实体层每帧重绘
+  }
+
+  /// host:打包当前状态广播给 guest。
+  void _sendSnapshot() {
+    final link = _link;
+    if (link == null || !link.isConnected) return;
+    _netFrame++;
+    if (_netFrame % 2 == 0) return; // 隔帧下行 ~30Hz,降蓝牙带宽与客机反序列化/GC 压力
+    final remaining = _queue.isEmpty ? 0 : (_queue.length - _killed);
+    link.send(Snapshot(
+      phase: phase,
+      score: score,
+      lives: lives,
+      level: level,
+      isBossLevel: _isBossLevel,
+      baseAlive: baseAlive,
+      freezeActive: _freezeTime > 0,
+      bossHpShown: _bossHpShown,
+      miniRemaining: _miniRemaining,
+      enemyRemaining: remaining,
+      gridSeq: _gridSeq,
+      time: _time,
+      grid: grid,
+      players: players,
+      enemies: enemies,
+      bullets: bullets,
+      powerups: powerups,
+      explosions: explosions,
+    ).toBytes());
+  }
+
+  /// guest:上行本地输入(语义=玩家1,host 收到后写入其 _dir2/_fire2)。
+  void _sendInput() {
+    final link = _link;
+    if (link == null || !link.isConnected) return;
+    link.send(InputFrame(dir: _dir1, fire: _fire1).toBytes());
+  }
+
+  /// host:把 guest 的远端输入落到本地 P2 通道。
+  void _applyRemoteInput() {
+    _dir2 = _remoteDir;
+    _fire2 = _remoteFire;
+  }
 }
 
 /// 动态虚拟摇杆：在区域内按下即出现，拖动控制 4 向，松开消失。
