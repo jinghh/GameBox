@@ -115,6 +115,8 @@ class _BattleCityGameState extends State<BattleCityGame>
   int _gridSeq = 0; // host:地形版本,_bumpTerrain 时 +1;快照下发给 guest
   int _lastGridSeq = -1; // guest:上次应用的地形版本(相同则跳过地形重绘)
   int _netFrame = 0; // host:下行隔帧计数(~30Hz)
+  bool _disconnected = false; // 联机:对端断开(仅 online 角色生效)
+  final Map<Tank, Offset> _tankTarget = {}; // guest:渲染中坦克→快照目标位置(插值平滑用)
 
   // ---- 生命周期 ----
   @override
@@ -146,7 +148,10 @@ class _BattleCityGameState extends State<BattleCityGame>
     // 联机:默认 offline(link==null)时下面是 no-op,不影响单机。
     _role = widget.role;
     _link = widget.link;
-    _rx = _link?.incoming.listen(_onPacket);
+    if (_role == NetRole.guest) {
+      _sound.muted = true; // 客机静音:避免两机同放 BGM/音效造成回声
+    }
+    _rx = _link?.incoming.listen(_onPacket, onDone: _onLinkClosed);
     if (widget.autoStart) {
       // host 进入后自动开局(twoPlayer=true 以生成 P2 坦克供 guest 控;
       // 控件布局由 _buildControls 在 host 模式下强制为单人)。
@@ -345,7 +350,8 @@ class _BattleCityGameState extends State<BattleCityGame>
     _perf.tick(dt);
 
     // 背景音乐:仅 playing 时响(暂停/结算/菜单/结束均停),受静音控制(在 BGM 内部)
-    final wantBgm = phase == Phase.playing;
+    // 客机不放 BGM(避免两机同放回声);其 BGM 由 host 端播放。
+    final wantBgm = phase == Phase.playing && _role != NetRole.guest;
     if (wantBgm != _bgmOn) {
       _bgmOn = wantBgm;
       if (wantBgm) {
@@ -389,6 +395,7 @@ class _BattleCityGameState extends State<BattleCityGame>
     // ---- 联机收发（offline 时 _link==null,以下均不执行）----
     if (_role == NetRole.guest) {
       _drainPendingSnapshot(); // 任何阶段都应用快照（含 phase 切换）
+      _interpTanks(dt); // 60Hz 平滑插值坦克位置(快照 30Hz,渲染 60Hz)
       if (phase == Phase.playing) _sendInput();
     } else if (_role == NetRole.host && phase != Phase.start) {
       _sendSnapshot(); // 广播当前状态（含 phase 变化）给 guest
@@ -1359,7 +1366,8 @@ class _BattleCityGameState extends State<BattleCityGame>
     return PopScope(
       canPop: phase == Phase.start ||
           phase == Phase.gameOver ||
-          phase == Phase.victory,
+          phase == Phase.victory ||
+          _disconnected,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && (phase == Phase.playing || phase == Phase.paused)) {
           _togglePause();
@@ -1417,10 +1425,54 @@ class _BattleCityGameState extends State<BattleCityGame>
                       ),
                     if (phase != Phase.playing)
                       Positioned.fill(child: _buildOverlay()),
+                    if (_disconnected && _role != NetRole.offline)
+                      Positioned.fill(child: _buildDisconnectOverlay()),
                   ],
                 );
               },
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 联机断开层:对端掉线时全屏提示 + 返回。
+  Widget _buildDisconnectOverlay() {
+    return Material(
+      color: const Color(0xCC000000),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.bluetooth_disabled,
+                  size: 56, color: Color(0xFFFF8A80)),
+              const SizedBox(height: 16),
+              const Text('连接已断开',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(
+                _role == NetRole.host ? '客机已掉线' : '与主机的连接中断',
+                style: const TextStyle(color: Color(0xFFAAAAAA), fontSize: 13),
+              ),
+              const SizedBox(height: 28),
+              SizedBox(
+                width: 180,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFFD54A),
+                    foregroundColor: const Color(0xFF0E0E0E),
+                  ),
+                  child: const Text('返回'),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -2169,6 +2221,14 @@ class _BattleCityGameState extends State<BattleCityGame>
     }
   }
 
+  /// 联机链路断开(rx 流 onDone):置断线标志、停 BGM、弹断线层。
+  /// 仅 online 角色触发;dispose 时 close() 触发的 onDone 因 widget 已 unmounted 被忽略。
+  void _onLinkClosed() {
+    if (!mounted || _role == NetRole.offline) return;
+    _bgm.stop();
+    setState(() => _disconnected = true);
+  }
+
   /// guest:应用最近一帧 host 快照(若有)。
   void _drainPendingSnapshot() {
     final s = _pending;
@@ -2202,12 +2262,11 @@ class _BattleCityGameState extends State<BattleCityGame>
       _terrainRepaint.value = _terrainRepaint.value + 1;
     }
 
-    players
-      ..clear()
-      ..addAll(s.players);
-    enemies
-      ..clear()
-      ..addAll(s.enemies);
+    // 坦克:持久化渲染对象 + 合并快照(玩家按 player 索引、敌人按最近邻同类),
+    // 仅更新属性并把快照位置记为"目标";.pos 由 _interpTanks 平滑插值 → 移动顺滑。
+    _mergeTanks(players, s.players, byIndex: true);
+    _mergeTanks(enemies, s.enemies, byIndex: false);
+    // 子弹/爆炸/道具:生命周期短,直接按快照刷新(snap)。
     bullets
       ..clear()
       ..addAll(s.bullets);
@@ -2217,12 +2276,118 @@ class _BattleCityGameState extends State<BattleCityGame>
     explosions
       ..clear()
       ..addAll(s.explosions);
+    // 清除已不在任何列表中的孤立目标项(防御外部重置列表)。
+    _tankTarget.removeWhere((t, _) => !players.contains(t) && !enemies.contains(t));
 
     _scene.baseAlive = baseAlive;
     _scene.time = _time;
     _scene.freezeActive = s.freezeActive;
 
     _frameRepaint.value = _frameRepaint.value + 1; // 实体层每帧重绘
+  }
+
+  /// 把快照坦克合并进渲染列表:匹配上则更新属性 + 记目标位置(.pos 不动,交插值);
+  /// 匹配不上则新建(直接 snap 入位);多余的渲染坦克移除。
+  /// byIndex=true(玩家)按列表索引匹配;false(敌人)按最近同类匹配。
+  void _mergeTanks(List<Tank> render, List<Tank> snap, {required bool byIndex}) {
+    if (byIndex) {
+      for (int i = 0; i < snap.length; i++) {
+        final src = snap[i];
+        if (i < render.length) {
+          _copyTankState(render[i], src);
+          _tankTarget[render[i]] = src.pos;
+        } else {
+          final t = _cloneTank(src);
+          render.add(t);
+          _tankTarget[t] = src.pos;
+        }
+      }
+      if (render.length > snap.length) {
+        for (int i = snap.length; i < render.length; i++) {
+          _tankTarget.remove(render[i]);
+        }
+        render.removeRange(snap.length, render.length);
+      }
+      return;
+    }
+    final claimed = <Tank>{};
+    final maxD = kTank * 2.2; // 允许两帧快照间移动量内匹配
+    for (final src in snap) {
+      Tank? best;
+      double bestD = maxD * maxD;
+      for (final t in render) {
+        if (claimed.contains(t)) continue;
+        if (t.kind != src.kind || t.size != src.size) continue; // 同类同尺寸
+        final d = (t.pos - src.pos).distanceSquared;
+        if (d < bestD) {
+          bestD = d;
+          best = t;
+        }
+      }
+      if (best != null) {
+        claimed.add(best);
+        _copyTankState(best, src);
+        _tankTarget[best] = src.pos;
+      } else {
+        final t = _cloneTank(src);
+        render.add(t);
+        _tankTarget[t] = src.pos;
+      }
+    }
+    render.removeWhere((t) {
+      if (!claimed.contains(t)) {
+        _tankTarget.remove(t);
+        return true;
+      }
+      return false;
+    });
+  }
+
+  /// 把快照坦克的可变属性复制到持久渲染坦克(pos 不动,由插值处理)。
+  void _copyTankState(Tank dst, Tank src) {
+    dst.dir = src.dir;
+    dst.alive = src.alive;
+    dst.bonus = src.bonus;
+    dst.spawning = src.spawning;
+    dst.bulletLevel = src.bulletLevel;
+    dst.hp = src.hp;
+    dst.armorHp = src.armorHp;
+    dst.shieldTime = src.shieldTime;
+    dst.isBoss = src.isBoss;
+    dst.isMiniBoss = src.isMiniBoss;
+  }
+
+  /// 复制快照坦克为新渲染对象(首次出现时 snap 入位)。
+  Tank _cloneTank(Tank s) => Tank(
+        pos: s.pos,
+        dir: s.dir,
+        isPlayer: s.isPlayer,
+        kind: s.kind,
+        speed: s.speed,
+        bonus: s.bonus,
+        player: s.player,
+        size: s.size,
+      )
+      ..alive = s.alive
+      ..isBoss = s.isBoss
+      ..isMiniBoss = s.isMiniBoss
+      ..bulletLevel = s.bulletLevel
+      ..hp = s.hp
+      ..armorHp = s.armorHp
+      ..shieldTime = s.shieldTime
+      ..spawning = s.spawning;
+
+  /// guest:每帧把渲染中坦克 .pos 朝快照目标位置指数平滑 → 60Hz 渲染顺滑。
+  void _interpTanks(double dt) {
+    if (_tankTarget.isEmpty) return;
+    final k = (dt * 24).clamp(0.0, 1.0); // ≈0.4/帧 @60fps
+    if (k <= 0) return;
+    _tankTarget.forEach((t, target) {
+      t.pos = Offset(
+        t.pos.dx + (target.dx - t.pos.dx) * k,
+        t.pos.dy + (target.dy - t.pos.dy) * k,
+      );
+    });
   }
 
   /// host:打包当前状态广播给 guest。
