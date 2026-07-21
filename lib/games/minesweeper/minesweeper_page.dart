@@ -7,6 +7,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../debug/game_debug_registry.dart';
 import '../../shared/best_score_store.dart';
 import '../../shared/game_shell.dart';
 
@@ -33,7 +34,8 @@ class _MCell {
   int adjacent = 0;
 }
 
-class _MinesweeperPageState extends State<MinesweeperPage> {
+class _MinesweeperPageState extends State<MinesweeperPage>
+    with GameDebugMixin<MinesweeperPage> {
   _DiffConf _conf = _easyConf;
   late List<_MCell> _cells;
   bool _started = false;
@@ -80,6 +82,38 @@ class _MinesweeperPageState extends State<MinesweeperPage> {
   void _newGame() => setState(() => _setup(_conf));
 
   void _setDiff(_DiffConf c) => setState(() => _setup(c));
+
+  // ---- 调试面板(GameDebug) ----
+  @override
+  String get id => 'mine';
+
+  @override
+  int? get currentLevel => null; // 无关卡(难度切换)
+
+  @override
+  int? get maxLevel => null;
+
+  @override
+  Map<String, String> info() => {
+        '难度': _conf.label,
+        '雷数': '${_conf.mines}',
+        '格子': '${_conf.rows}×${_conf.cols}',
+        '用时': '$_elapsed s',
+        '旗帜': '$_flags',
+        '最佳': identical(_conf, _easyConf)
+            ? (_hasBestEasy ? '$_bestEasy s' : '—')
+            : (_hasBestMed ? '$_bestMed s' : '—'),
+        '状态': _over
+            ? '失败'
+            : _won
+                ? '通关'
+                : _started
+                    ? '进行中'
+                    : '未开始',
+      };
+
+  @override
+  void jumpToLevel(int n) {} // 无关卡
 
   // ---- 核心 ----
   List<int> _neighbors(int idx) {

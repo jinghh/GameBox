@@ -11,6 +11,7 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../../../debug/game_debug_registry.dart';
 import '../../../shared/net/bt_spp_link.dart';
 import '../../../shared/net/tank_bluetooth.dart';
 import '../battle_city_game.dart';
@@ -25,7 +26,8 @@ class TankBtRoomPage extends StatefulWidget {
 
 enum _Mode { menu, hosting, picking, connecting }
 
-class _TankBtRoomPageState extends State<TankBtRoomPage> {
+class _TankBtRoomPageState extends State<TankBtRoomPage>
+    with GameDebugMixin<TankBtRoomPage> {
   _Mode _mode = _Mode.menu;
   bool _busy = false;
   String? _hint;
@@ -116,6 +118,27 @@ class _TankBtRoomPageState extends State<TankBtRoomPage> {
       ),
     );
   }
+
+  // ---- 调试面板(GameDebug) ----
+  @override
+  String get id => 'tank_online';
+
+  @override
+  int? get currentLevel => null; // 房间页无关卡
+
+  @override
+  int? get maxLevel => null;
+
+  @override
+  Map<String, String> info() => {
+        '阶段': _mode.name,
+        '忙碌': _busy ? '是' : '否',
+        '提示': _hint ?? '正常',
+        '已配对设备': '${_devices.length}',
+      };
+
+  @override
+  void jumpToLevel(int n) {} // 无关卡
 
   void _snack(String msg) {
     if (!mounted) return;

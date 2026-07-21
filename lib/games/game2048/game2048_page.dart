@@ -7,6 +7,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../debug/game_debug_registry.dart';
 import '../../shared/best_score_store.dart';
 import '../../shared/game_shell.dart';
 import '../../shared/swipe_detector.dart';
@@ -33,7 +34,8 @@ class _Tile {
         justSpawned = false;
 }
 
-class _Game2048PageState extends State<Game2048Page> {
+class _Game2048PageState extends State<Game2048Page>
+    with GameDebugMixin<Game2048Page> {
   final List<_Tile> _tiles = [];
   int _nextId = 0;
   int _score = 0;
@@ -73,6 +75,31 @@ class _Game2048PageState extends State<Game2048Page> {
   }
 
   void _newGame() => setState(_reset);
+
+  // ---- 调试面板(GameDebug) ----
+  @override
+  String get id => 'g2048';
+
+  @override
+  int? get currentLevel => null; // 无关卡
+
+  @override
+  int? get maxLevel => null;
+
+  @override
+  Map<String, String> info() => {
+        '得分': '$_score',
+        '最高': '$_best',
+        '达成2048': _won ? '是' : '否',
+        '状态': _over
+            ? '结束'
+            : (_won && !_keepPlaying)
+                ? '胜利'
+                : '进行中',
+      };
+
+  @override
+  void jumpToLevel(int n) {} // 无关卡
 
   void _spawnTile({required bool animate}) {
     final occupied = <int>{};

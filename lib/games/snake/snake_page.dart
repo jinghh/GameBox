@@ -8,6 +8,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../debug/game_debug_registry.dart';
 import '../../shared/best_score_store.dart';
 import '../../shared/swipe_detector.dart';
 
@@ -17,7 +18,8 @@ class SnakePage extends StatefulWidget {
   State<SnakePage> createState() => _SnakePageState();
 }
 
-class _SnakePageState extends State<SnakePage> {
+class _SnakePageState extends State<SnakePage>
+    with GameDebugMixin<SnakePage> {
   static const int _cols = 29, _rows = 11;
   List<Point<int>> _snake = [];
   Point<int> _food = const Point(0, 0);
@@ -87,6 +89,44 @@ class _SnakePageState extends State<SnakePage> {
   }
 
   void _newGame() => setState(_reset);
+
+  // ---- 调试面板(GameDebug) ----
+  @override
+  String get id => 'snake';
+
+  @override
+  int? get currentLevel => _level;
+
+  @override
+  int? get maxLevel => null; // 无尽
+
+  @override
+  Map<String, String> info() => {
+        '关卡': '$_level',
+        '得分': '$_score',
+        '进度': '$_levelEaten/$_levelTarget',
+        '用时': _fmtTime(_elapsed),
+        '最高': '$_best',
+        '状态': _over
+            ? '结束'
+            : _paused
+                ? '暂停'
+                : _leveling
+                    ? '过关'
+                    : _started
+                        ? '进行中'
+                        : '未开始',
+      };
+
+  @override
+  void jumpToLevel(int n) {
+    _reset();
+    _level = n < 1 ? 1 : n;
+    _obstacles.clear();
+    _regenObstacles();
+    _placeFood();
+    _start();
+  }
 
   void _start() {
     if (_started) return;

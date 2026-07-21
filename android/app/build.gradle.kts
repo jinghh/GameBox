@@ -32,6 +32,19 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    // dev/prod 双包:dev 用独立包名(.dev)+角标图标,可与线上版并存安装在同一手机。
+    flavorDimensions += "mode"
+    productFlavors {
+        create("prod") {
+            dimension = "mode"
+        }
+        create("dev") {
+            dimension = "mode"
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+        }
+    }
 }
 
 kotlin {

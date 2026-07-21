@@ -8,6 +8,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../debug/game_debug_registry.dart';
 import '../../shared/best_score_store.dart';
 import '../../shared/game_shell.dart';
 
@@ -20,7 +21,8 @@ class GomokuPage extends StatefulWidget {
   State<GomokuPage> createState() => _GomokuPageState();
 }
 
-class _GomokuPageState extends State<GomokuPage> {
+class _GomokuPageState extends State<GomokuPage>
+    with GameDebugMixin<GomokuPage> {
   late List<List<int>> _board; // 0 空 / 1 黑 / 2 白
   int _turn = 1; // 当前回合(1 黑先)
   bool _aiMode = true; // 人机模式:玩家执黑(1),AI 执白(2)
@@ -58,6 +60,33 @@ class _GomokuPageState extends State<GomokuPage> {
   }
 
   void _newGame() => setState(_reset);
+
+  // ---- 调试面板(GameDebug) ----
+  @override
+  String get id => 'gomoku';
+
+  @override
+  int? get currentLevel => null; // 无关卡概念
+
+  @override
+  int? get maxLevel => null;
+
+  @override
+  Map<String, String> info() => {
+        '模式': _aiMode ? '人机' : '双人',
+        '回合': _turn == 1 ? '黑' : '白',
+        '手数': '$_moveCount',
+        '连胜': '$_streak',
+        '最高连胜': '$_best',
+        '状态': _over
+            ? (_winner == 0 ? '和棋' : (_winner == 1 ? '黑胜' : '白胜'))
+            : _thinking
+                ? 'AI思考'
+                : '进行中',
+      };
+
+  @override
+  void jumpToLevel(int n) {} // 无关卡
 
   void _toggleMode() {
     setState(() {

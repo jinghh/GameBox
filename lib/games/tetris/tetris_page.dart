@@ -9,6 +9,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../debug/game_debug_registry.dart';
 import '../../shared/best_score_store.dart';
 import '../../shared/game_shell.dart';
 import '../../shared/sound_store.dart';
@@ -64,7 +65,8 @@ class TetrisPage extends StatefulWidget {
   State<TetrisPage> createState() => _TetrisPageState();
 }
 
-class _TetrisPageState extends State<TetrisPage> {
+class _TetrisPageState extends State<TetrisPage>
+    with GameDebugMixin<TetrisPage> {
   late List<List<int>> _grid; // [row][col]，0 空 / kind+1 有色
   _Piece? _cur;
   int _next = 0;
@@ -127,6 +129,38 @@ class _TetrisPageState extends State<TetrisPage> {
   void _newGame() {
     _playClick();
     setState(_reset);
+  }
+
+  // ---- 调试面板(GameDebug) ----
+  @override
+  String get id => 'tetris';
+
+  @override
+  int? get currentLevel => _level;
+
+  @override
+  int? get maxLevel => null; // 无尽(等级 = 行数/10+1)
+
+  @override
+  Map<String, String> info() => {
+        '等级': '$_level',
+        '得分': '$_score',
+        '行数': '$_lines',
+        '最高': '$_best',
+        '状态': _over
+            ? '结束'
+            : _paused
+                ? '暂停'
+                : _started
+                    ? '进行中'
+                    : '未开始',
+      };
+
+  @override
+  void jumpToLevel(int n) {
+    _reset();
+    _level = n < 1 ? 1 : n;
+    _start(); // _rearmGravity 会按新等级提速
   }
 
   void _start() {

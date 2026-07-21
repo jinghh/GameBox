@@ -11,6 +11,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../../debug/game_debug_registry.dart';
 import 'constants.dart';
 import 'maps.dart';
 import 'models.dart';
@@ -39,7 +40,7 @@ class BattleCityGame extends StatefulWidget {
 }
 
 class _BattleCityGameState extends State<BattleCityGame>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, GameDebugMixin<BattleCityGame> {
   // ---- 场景数据 ----
   late List<List<Terrain>> grid;
   final List<Tank> players = [];
@@ -300,6 +301,29 @@ class _BattleCityGameState extends State<BattleCityGame>
     _sound.play('start');
     setState(() {});
   }
+
+  // ---- 调试面板(GameDebug) ----
+  @override
+  String get id => 'tank';
+
+  @override
+  int? get currentLevel => level + 1; // 内部 0-based → 面板显示 1-based
+
+  @override
+  int? get maxLevel => kLevels.length; // 6 关
+
+  @override
+  Map<String, String> info() => {
+        '关卡': '${level + 1}/${kLevels.length}',
+        '得分': '$score',
+        '生命': '$lives',
+        '基地': baseAlive ? '完好' : '失守',
+        '阶段': phase.name,
+        '双人': _twoPlayer ? '是' : '否',
+      };
+
+  @override
+  void jumpToLevel(int n) => _jumpToLevel(n - 1); // 面板 1-based → 内部 0-based
 
   void _showLevelSelect() {
     showDialog<void>(

@@ -1,0 +1,8 @@
+<!-- dev flavor 覆盖:开发包应用名带 Dev 后缀,便于与线上版在桌面区分。
+     图标由 dev 资源集的 mipmap(带红色角标)覆盖。 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application
+        android:label="GAMEBOX Dev"
+        tools:replace="android:label" />
+</manifest>

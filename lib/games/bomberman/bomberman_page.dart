@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
+import '../../debug/game_debug_registry.dart';
 import '../../shared/best_score_store.dart';
 import '../../shared/bgm_synth.dart';
 import '../../shared/game_shell.dart';
@@ -113,7 +114,7 @@ class BomberPage extends StatefulWidget {
 }
 
 class _BomberPageState extends State<BomberPage>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, GameDebugMixin<BomberPage> {
   late final Ticker _ticker;
   final ValueNotifier<int> _repaint = ValueNotifier(0);
   Duration _lastElapsed = Duration.zero;
@@ -331,6 +332,57 @@ class _BomberPageState extends State<BomberPage>
     _cleared = false;
     _held.clear();
     _buildArena(_level);
+    setState(() {});
+  }
+
+  // ---- 调试面板(GameDebug) ----
+  @override
+  String get id => 'bomber';
+
+  @override
+  int? get currentLevel => _level;
+
+  @override
+  int? get maxLevel => null; // 无尽
+
+  @override
+  Map<String, String> info() => {
+        '关卡': '$_level',
+        '得分': '$_score',
+        '最高': '$_best',
+        '炸弹': '${_player.maxBombs}',
+        '火力': '${_player.flameRange}',
+        '生命': '${_player.lives}',
+        '状态': _over
+            ? '结束'
+            : _cleared
+                ? '过关'
+                : _paused
+                    ? '暂停'
+                    : _started
+                        ? '进行中'
+                        : '未开始',
+      };
+
+  @override
+  void jumpToLevel(int n) {
+    _level = n < 1 ? 1 : n;
+    _score = 0;
+    _player
+      ..lives = 3
+      ..maxBombs = 1
+      ..flameRange = 2
+      ..speed = _kPlayerSpeed
+      ..alive = true;
+    _started = true;
+    _paused = false;
+    _over = false;
+    _cleared = false;
+    _buildArena(_level);
+    _player.invuln = _kInvuln;
+    _lastElapsed = Duration.zero;
+    _syncTicker();
+    _bgm.start();
     setState(() {});
   }
 
