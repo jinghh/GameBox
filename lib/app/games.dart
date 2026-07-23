@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../games/bomberman/bomberman_page.dart';
+import '../games/bomberman/net/bomber_bt_room_page.dart';
 import '../games/game2048/game2048_page.dart';
 import '../games/gomoku/gomoku_page.dart';
 import '../games/minesweeper/minesweeper_page.dart';
@@ -51,7 +52,32 @@ final List<GameSpec> kGames = [
     subtitle: '蓝牙·双人闯关',
     emoji: '📶',
     accent: const Color(0xFF4CAF50),
-    builder: (_) => const TankBtRoomPage(),
+    builder: (_) => TankBtRoomPage(),
+  ),
+  GameSpec(
+    id: 'bomber',
+    title: '泡泡堂',
+    subtitle: '放雷炸敌,过关递增',
+    emoji: '💣',
+    accent: const Color(0xFFFF8A4C),
+    builder: (_) => const BomberPage(),
+    bestKey: 'best_bomber',
+  ),
+  GameSpec(
+    id: 'bomber_coop',
+    title: '泡泡堂双人',
+    subtitle: '同屏·双人闯关',
+    emoji: '👾',
+    accent: const Color(0xFF66BB6A),
+    builder: (_) => const BomberPage(coop: true),
+  ),
+  GameSpec(
+    id: 'bomber_online',
+    title: '泡泡堂联机',
+    subtitle: '蓝牙·双人 1v1',
+    emoji: '📶',
+    accent: const Color(0xFFEF5350),
+    builder: (_) => BomberBtRoomPage(),
   ),
   GameSpec(
     id: 'g2048',
@@ -98,14 +124,5 @@ final List<GameSpec> kGames = [
     accent: const Color(0xFFE0B040),
     builder: (_) => const GomokuPage(),
     bestKey: 'best_gomoku',
-  ),
-  GameSpec(
-    id: 'bomber',
-    title: '泡泡堂',
-    subtitle: '放雷炸敌,过关递增',
-    emoji: '💣',
-    accent: const Color(0xFFFF8A4C),
-    builder: (_) => const BomberPage(),
-    bestKey: 'best_bomber',
   ),
 ];

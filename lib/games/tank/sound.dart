@@ -69,7 +69,9 @@ class SoundService {
         for (final p in list) {
           try {
             p.dispose();
-          } on Object {}
+          } on Object {
+            // 忽略释放过程中的异常
+          }
         }
       }
       _ready = false;
@@ -109,7 +111,9 @@ class SoundService {
       for (final p in list) {
         try {
           p.dispose();
-        } on Object {}
+        } on Object {
+          // 忽略释放过程中的异常
+        }
       }
     }
     _pools.clear();

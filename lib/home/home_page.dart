@@ -11,43 +11,147 @@ class HomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 20,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('GAMEBOX',
-                style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 1),
-            Text('${kGames.length} 款 · 纯单机离线',
-                style: const TextStyle(
-                    color: Color(0xFF888888), fontSize: 11, height: 1.2)),
-          ],
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF201E1A), Color(0xFF141417)],
+          ),
         ),
-        automaticallyImplyLeading: false,
-        actions: [
-          ValueListenableBuilder<bool>(
-            valueListenable: kMuted,
-            builder: (_, muted, __) => IconButton(
-              tooltip: muted ? '取消静音' : '静音',
-              icon: Icon(muted ? Icons.volume_off : Icons.volume_up,
-                  color: const Color(0xFFFFD54A)),
-              onPressed: SoundStore.toggle,
+        child: SafeArea(
+          child: Column(
+            children: [
+              const _Header(),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    // 响应式列数：以 ~190 为理想卡片宽度，限定 2~4 列。
+                    final cols =
+                        (constraints.maxWidth / 190).floor().clamp(2, 4);
+                    return GridView.builder(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: cols,
+                        mainAxisSpacing: 14,
+                        crossAxisSpacing: 14,
+                        childAspectRatio: 0.88,
+                      ),
+                      itemCount: kGames.length,
+                      itemBuilder: (context, i) => _GameCard(spec: kGames[i]),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 顶部品牌区：渐变大标题 + 标签胶囊 + 静音按钮。
+class _Header extends StatelessWidget {
+  const _Header();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 14, 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ShaderMask(
+                  blendMode: BlendMode.srcIn,
+                  shaderCallback: (b) => const LinearGradient(
+                    colors: [Color(0xFFFFE082), Color(0xFFFFB300)],
+                  ).createShader(b),
+                  child: const Text(
+                    'GAMEBOX',
+                    style: TextStyle(
+                      fontSize: 30,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 2,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _Pill(label: '🎮 ${kGames.length} 款游戏'),
+                    const _Pill(label: '📴 纯单机离线'),
+                  ],
+                ),
+              ],
             ),
           ),
+          const _MuteButton(),
         ],
       ),
-      body: GridView.builder(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          mainAxisSpacing: 14,
-          crossAxisSpacing: 14,
-          childAspectRatio: 0.96,
+    );
+  }
+}
+
+/// 顶部小标签胶囊。
+class _Pill extends StatelessWidget {
+  final String label;
+  const _Pill({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(fontSize: 11, color: Color(0xFFB8B8C0)),
+      ),
+    );
+  }
+}
+
+/// 圆形静音按钮，状态变化仅重建自身。
+class _MuteButton extends StatelessWidget {
+  const _MuteButton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: kMuted,
+      builder: (_, muted, child) => Material(
+        color: Colors.transparent,
+        shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: SoundStore.toggle,
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white.withValues(alpha: 0.06),
+              border: Border.all(
+                  color: const Color(0xFFFFD54A).withValues(alpha: 0.4)),
+            ),
+            child: Icon(
+              muted ? Icons.volume_off : Icons.volume_up,
+              color: const Color(0xFFFFD54A),
+              size: 22,
+            ),
+          ),
         ),
-        itemCount: kGames.length,
-        itemBuilder: (context, i) => _GameCard(spec: kGames[i]),
       ),
     );
   }
@@ -78,84 +182,120 @@ class _GameCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (sub, hasBest) = _subLine();
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E1E24),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: spec.accent.withValues(alpha: 0.32), width: 1.2),
-        boxShadow: [
-          BoxShadow(
-              color: spec.accent.withValues(alpha: 0.10),
-              blurRadius: 14,
-              offset: const Offset(0, 5)),
-          const BoxShadow(
-              color: Color(0x66000000), blurRadius: 6, offset: Offset(0, 2)),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(18),
+    final accent = spec.accent;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF212128),
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [accent.withValues(alpha: 0.14), const Color(0xFF212128)],
+          ),
+          border: Border.all(color: accent.withValues(alpha: 0.30), width: 1.2),
+          boxShadow: [
+            BoxShadow(
+                color: accent.withValues(alpha: 0.16),
+                blurRadius: 16,
+                offset: const Offset(0, 6)),
+            const BoxShadow(
+                color: Color(0x55000000), blurRadius: 8, offset: Offset(0, 3)),
+          ],
+        ),
         child: Material(
           color: Colors.transparent,
           child: InkWell(
             onTap: () => _open(context),
-            splashColor: spec.accent.withValues(alpha: 0.20),
-            highlightColor: spec.accent.withValues(alpha: 0.10),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 58,
-                    height: 58,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          spec.accent,
-                          spec.accent.withValues(alpha: 0.55),
-                        ],
+            splashColor: accent.withValues(alpha: 0.22),
+            highlightColor: accent.withValues(alpha: 0.10),
+            child: Column(
+              children: [
+                // 顶部 accent 装饰条（被父级 ClipRRect 裁出圆角）
+                Container(
+                  height: 4,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [accent, accent.withValues(alpha: 0.35)],
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Container(
+                              width: 62,
+                              height: 62,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: [
+                                    accent,
+                                    accent.withValues(alpha: 0.55),
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(18),
+                                boxShadow: [
+                                  BoxShadow(
+                                      color: accent.withValues(alpha: 0.45),
+                                      blurRadius: 12,
+                                      offset: const Offset(0, 4)),
+                                ],
+                              ),
+                              child: Center(
+                                child: Text(spec.emoji,
+                                    style: const TextStyle(fontSize: 32)),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              spec.title,
+                              style: const TextStyle(
+                                color: Color(0xFFF2F2F5),
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              sub,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: hasBest
+                                    ? accent
+                                    : const Color(0xFF9A9AA2),
+                                fontSize: 11.5,
+                                fontWeight: hasBest
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                            color: spec.accent.withValues(alpha: 0.45),
-                            blurRadius: 12,
-                            offset: const Offset(0, 4)),
-                      ],
-                    ),
-                    child: Center(
-                      child: Text(spec.emoji,
-                          style: const TextStyle(
-                              fontSize: 30, decoration: TextDecoration.none)),
-                    ),
+                      Positioned(
+                        right: 12,
+                        bottom: 10,
+                        child: Icon(
+                          Icons.chevron_right,
+                          size: 16,
+                          color: accent.withValues(alpha: 0.55),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 12),
-                  Text(
-                    spec.title,
-                    style: TextStyle(
-                      color: spec.accent,
-                      fontSize: 17,
-                      fontWeight: FontWeight.bold,
-                      decoration: TextDecoration.none,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    sub,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: hasBest ? spec.accent : const Color(0xFF999999),
-                      fontSize: 11,
-                      fontWeight:
-                          hasBest ? FontWeight.bold : FontWeight.normal,
-                      decoration: TextDecoration.none,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),

@@ -67,12 +67,12 @@ class _BattleCityGameState extends State<BattleCityGame>
   int _levelClearStartScore = 0;
   int _levelClearBonus = 0;
 
-  // ---- Boss 终关 ----
+  // ---- Boss 关(第 3 / 6 / 9 关) ----
   bool _isBossLevel = false;
+  int _bossTier = 0; // 当前关卡 Boss 分级(0=非 Boss 关,1/2/3=Tier)
   bool _bossSpawned = false;
-  bool _bossSplit = false;
-  int _bossHpShown = kBossHp; // HUD 显示用(随受击更新)
-  int _miniRemaining = 0;
+  int _bossHpShown = 0; // HUD 显示用:当前血量(随受击更新)
+  int _bossMaxHp = 1; // HUD 显示用:总血量(血条比例)
   double _victoryT = 0; // 通关结算动画进度
 
   double _freezeTime = 0;
@@ -109,12 +109,12 @@ class _BattleCityGameState extends State<BattleCityGame>
   late NetRole _role; // offline / host / guest
   P2pLink? _link;
   StreamSubscription<Uint8List>? _rx; // 收包订阅
-  Snapshot? _pending; // guest:待应用的最近一帧 host 快照
+  final List<Snapshot> _pendingQueue = []; // guest:待应用的 host 快照(队列防丢帧)
   Dir? _remoteDir; // host:收到的 guest 输入(玩家1)
   bool _remoteFire = false;
   int _enemyRemaining = 0; // guest HUD 剩余敌人(由快照提供)
   int _gridSeq = 0; // host:地形版本,_bumpTerrain 时 +1;快照下发给 guest
-  int _lastGridSeq = -1; // guest:上次应用的地形版本(相同则跳过地形重绘)
+  int _lastSentGridSeq = -1; // host:上次下行携带的地形版本(差量同步)
   int _netFrame = 0; // host:下行隔帧计数(~30Hz)
   bool _disconnected = false; // 联机:对端断开(仅 online 角色生效)
   final Map<Tank, Offset> _tankTarget = {}; // guest:渲染中坦克→快照目标位置(插值平滑用)
@@ -193,10 +193,10 @@ class _BattleCityGameState extends State<BattleCityGame>
     if (twoPlayer != null) _twoPlayer = twoPlayer;
     level = n;
     _isBossLevel = isBossLevel(n);
+    _bossTier = bossTierForLevel(n);
     _bossSpawned = false;
-    _bossSplit = false;
-    _bossHpShown = kBossHp;
-    _miniRemaining = 0;
+    _bossMaxHp = _bossTier > 0 ? kBossTiers[_bossTier - 1].hp : 1;
+    _bossHpShown = _bossMaxHp;
     final map = kLevels[n % kLevels.length];
     grid = parseTerrain(map);
     _scene.grid = grid;
@@ -310,7 +310,7 @@ class _BattleCityGameState extends State<BattleCityGame>
   int? get currentLevel => level + 1; // 内部 0-based → 面板显示 1-based
 
   @override
-  int? get maxLevel => kLevels.length; // 6 关
+  int? get maxLevel => kLevels.length; // 9 关
 
   @override
   Map<String, String> info() => {
@@ -388,14 +388,14 @@ class _BattleCityGameState extends State<BattleCityGame>
     switch (phase) {
       case Phase.playing:
         if (_role != NetRole.guest) {
+          if (_role == NetRole.host) {
+            _applyRemoteInput(); // 先用本帧已到的最新远端输入,再推进
+          }
           _perf.updateSw.start();
           update(dt); // offline / host:原样推进
           _perf.updateSw.stop();
           _perf.lastUpdateUs = _perf.updateSw.elapsedMicroseconds;
           _perf.updateSw.reset();
-          if (_role == NetRole.host) {
-            _applyRemoteInput(); // guest 上行的输入写入 _dir2/_fire2
-          }
         }
         // guest:不跑逻辑,状态由下方 _drainPendingSnapshot 从快照覆盖
         break;
@@ -472,7 +472,7 @@ class _BattleCityGameState extends State<BattleCityGame>
       p1,
       _isBossLevel ? 1 : 0,
       _bossHpShown,
-      _miniRemaining,
+      _bossMaxHp,
     );
   }
 
@@ -721,6 +721,7 @@ class _BattleCityGameState extends State<BattleCityGame>
 
   // ---- Boss 出生 ----
   void _spawnBoss() {
+    final tier = kBossTiers[(_bossTier - 1).clamp(0, kBossTiers.length - 1)];
     // 顶部居中清出 6×6 cell 的 Boss 出生区
     final bossCol = (kCells ~/ 2) - 3; // 10
     for (int y = 0; y < 6; y++) {
@@ -733,20 +734,22 @@ class _BattleCityGameState extends State<BattleCityGame>
       pos: Offset(cellToWorld(bossCol), 0),
       dir: Dir.down,
       isPlayer: false,
-      speed: kBossSpeed1,
+      speed: tier.speed1,
       size: kBossSize,
     )
       ..isBoss = true
-      ..hp = kBossHp
+      ..hp = tier.hp
+      ..maxHp = tier.hp
       ..spawning = true
       ..spawnAnim = 0
       ..fireCooldown = 1.6
       ..bombTimer = kBossBombInterval
+      ..summonTimer = kBossSummonInterval
       ..aiTimer = 0.4;
     enemies.add(boss);
     _bossSpawned = true;
-    _bossSplit = false;
-    _bossHpShown = kBossHp;
+    _bossHpShown = tier.hp;
+    _bossMaxHp = tier.hp;
     _sound.play('start');
   }
 
@@ -765,10 +768,6 @@ class _BattleCityGameState extends State<BattleCityGame>
 
     if (e.isBoss) {
       _updateBoss(e, dt);
-      return;
-    }
-    if (e.isMiniBoss) {
-      _updateMini(e, dt);
       return;
     }
 
@@ -821,17 +820,24 @@ class _BattleCityGameState extends State<BattleCityGame>
     return opts[_rng.nextInt(opts.length)];
   }
 
-  // ======================== Boss:虎二坦克 ========================
-  /// Boss 阶段(1 常规 / 2 狂怒 / 3 绝地反击),按血量划分。
+  // ======================== Boss:双首领 ========================
+  /// 当前关卡的 Boss 配置。
+  BossTier get _tier =>
+      kBossTiers[(_bossTier - 1).clamp(0, kBossTiers.length - 1)];
+
+  /// Boss 阶段(1 常规 / 2 狂怒 / 3 绝地反击),按剩余血量比例划分,
+  /// 使各 Tier(血量不同)拥有一致的阶段节奏。
   int _bossPhase(Tank e) {
-    if (e.hp <= kBossPhase3Hp) return 3;
-    if (e.hp <= kBossPhase2Hp) return 2;
+    final frac = e.maxHp > 0 ? e.hp / e.maxHp : 0.0;
+    if (frac <= kBossPhase3Frac) return 3;
+    if (frac <= kBossPhase2Frac) return 2;
     return 1;
   }
 
   void _updateBoss(Tank e, double dt) {
+    final tier = _tier;
     final phase = _bossPhase(e);
-    e.speed = phase == 1 ? kBossSpeed1 : (phase == 2 ? kBossSpeed2 : kBossSpeed3);
+    e.speed = phase == 1 ? tier.speed1 : (phase == 2 ? tier.speed2 : tier.speed3);
 
     e.aiTimer -= dt;
     if (e.aiTimer <= 0) {
@@ -851,18 +857,52 @@ class _BattleCityGameState extends State<BattleCityGame>
     if (e.fireCooldown <= 0) {
       _fireBoss(e, phase);
       e.fireCooldown = phase == 1
-          ? kBossFireCd1
-          : (phase == 2 ? kBossFireCd2 : kBossFireCd3);
+          ? tier.fireCd1
+          : (phase == 2 ? tier.fireCd2 : tier.fireCd3);
     }
 
-    // 阶段3:每 10s 向玩家扔一枚炸弹
-    if (phase >= 3) {
+    // 狂怒起(阶段>=2):周期召唤精英僚机(仅 Tier2)
+    if (phase >= 2 && tier.canSummon) {
+      e.summonTimer -= dt;
+      if (e.summonTimer <= 0) {
+        _summonGuards();
+        e.summonTimer = kBossSummonInterval;
+      }
+    }
+
+    // 绝地(阶段3):周期投掷炸弹(仅 Tier2)
+    if (phase >= 3 && tier.canBomb) {
       e.bombTimer -= dt;
       if (e.bombTimer <= 0) {
         _bossBomb(e);
         e.bombTimer = kBossBombInterval;
       }
     }
+  }
+
+  /// 召唤精英僚机(高速坦克)对玩家施压,受场上数量上限约束。
+  /// 替代旧「临死分裂」机制,把压力前置到战斗过程中,节奏更紧凑。
+  void _summonGuards() {
+    final onField = enemies.where((t) => t.alive && !t.isBoss).length;
+    if (onField >= kBossSummonMaxOnField) return;
+    final n = min(kBossSummonCount, kBossSummonMaxOnField - onField);
+    var spawned = 0;
+    for (int i = 0; i < n; i++) {
+      final col =
+          kEnemySpawnColChoices[_rng.nextInt(kEnemySpawnColChoices.length)];
+      final pos = Offset(cellToWorld(col), 0);
+      final rect = Rect.fromLTWH(pos.dx, pos.dy, kTank, kTank);
+      if (enemies.any((t) => t.alive && t.rect.overlaps(rect))) continue;
+      enemies.add(Tank(
+        pos: pos,
+        dir: Dir.down,
+        isPlayer: false,
+        kind: EnemyKind.fast,
+        speed: kEnemySpeedFast,
+      )..spawning = true);
+      spawned++;
+    }
+    if (spawned > 0) _sound.play('start', volume: 0.4);
   }
 
   /// 炸弹/追击目标:最近玩家;无玩家存活时瞄准基地。
@@ -910,45 +950,6 @@ class _BattleCityGameState extends State<BattleCityGame>
     ));
     _sound.play('big_explosion', volume: 0.35);
     HapticFeedback.mediumImpact();
-  }
-
-  // ---- 小Boss(分裂体):高速 + 三连发 ----
-  void _updateMini(Tank e, double dt) {
-    e.aiTimer -= dt;
-    if (e.aiTimer <= 0) {
-      final p = _nearestPlayer(e);
-      if (p != null && _rng.nextDouble() < 0.6) {
-        e.dir = _dirToward(e.center, p.center);
-      } else {
-        const opts = [Dir.down, Dir.left, Dir.right, Dir.up];
-        e.dir = opts[_rng.nextInt(opts.length)];
-      }
-      e.aiTimer = 0.4 + _rng.nextDouble() * 0.7;
-    }
-    final before = e.pos.dx + e.pos.dy;
-    _tryMoveTank(e, e.dir, e.speed * dt);
-    if (((e.pos.dx + e.pos.dy) - before).abs() < 0.01) e.aiTimer = 0;
-
-    if (e.fireCooldown <= 0) {
-      _fireMini(e);
-      e.fireCooldown = kEnemyFireCooldown * 0.7;
-    }
-  }
-
-  /// 三连发:沿主向并排射出三发(近似扇形弹幕)。
-  void _fireMini(Tank e) {
-    final perp = Offset(-e.dir.vector.dy, e.dir.vector.dx);
-    const offs = [-6.0, 0.0, 6.0];
-    for (final off in offs) {
-      final muzzle = e.center + e.dir.vector * (e.size / 2) + perp * off;
-      bullets.add(Bullet(
-        pos: muzzle - const Offset(kBullet / 2, kBullet / 2),
-        dir: e.dir,
-        fromPlayer: false,
-        speed: kBulletSpeedFast,
-      ));
-    }
-    _sound.play('enemy_shoot', volume: 0.22);
   }
 
   // ---- 子弹 ----
@@ -1125,22 +1126,16 @@ class _BattleCityGameState extends State<BattleCityGame>
         _sound.play('hit', volume: 0.3);
         return;
       }
-      // hp 归零:分裂为 3 个小 Boss(仅一次)
-      if (!_bossSplit) {
-        _bossSplit = true;
-        _splitBoss(e);
-      }
+      // 血量归零:Boss 直接被击破(不再分裂),击破即达成通关条件。
+      e.alive = false;
+      score += _tier.killBonus;
+      explosions
+          .add(Explosion(e.center, life: 0.7, size: kBossSize * 1.2, big: true));
+      _sound.play('big_explosion');
+      HapticFeedback.heavyImpact();
       return;
     }
-    if (e.isMiniBoss) {
-      e.hp--;
-      e.hitFlashTime = 0.1;
-      if (e.hp > 0) {
-        explosions.add(Explosion(e.center, life: 0.14, size: kCell));
-        _sound.play('hit', volume: 0.3);
-        return;
-      }
-    } else if (e.kind == EnemyKind.armor) {
+    if (e.kind == EnemyKind.armor) {
       e.armorHp--;
       if (e.armorHp > 0) {
         explosions.add(Explosion(e.center, life: 0.14, size: kCell));
@@ -1150,43 +1145,11 @@ class _BattleCityGameState extends State<BattleCityGame>
     }
     e.alive = false;
     _killed++;
-    score += e.isMiniBoss
-        ? kBossMiniBonus
-        : (e.kind != null ? scoreForKind(e.kind!) : 0);
-    if (e.isMiniBoss) _miniRemaining = max(0, _miniRemaining - 1);
+    score += e.kind != null ? scoreForKind(e.kind!) : 0;
     explosions.add(Explosion(e.center, life: 0.4, size: kTank * 1.4, big: true));
     _sound.play('explosion', volume: 0.5);
     HapticFeedback.mediumImpact();
     if (e.bonus) _spawnPowerUp();
-  }
-
-  /// Boss 临死分裂:本体消失,生成 3 个小 Boss,奖励大分。
-  void _splitBoss(Tank e) {
-    final ctr = e.center;
-    explosions.add(Explosion(ctr, life: 0.6, size: kBossSize, big: true));
-    _sound.play('big_explosion');
-    HapticFeedback.heavyImpact();
-    e.alive = false;
-    score += kBossKillBonus;
-    _miniRemaining = kBossMiniCount;
-    const offs = <double>[-kTank * 1.3, 0.0, kTank * 1.3];
-    for (final ox in offs) {
-      final pos = Offset(
-        (ctr.dx + ox).clamp(0.0, kBattle - kTank),
-        ctr.dy.clamp(0.0, kBattle - kTank),
-      );
-      enemies.add(Tank(
-        pos: pos,
-        dir: Dir.down,
-        isPlayer: false,
-        speed: kBossMiniSpeed,
-      )
-        ..isMiniBoss = true
-        ..hp = kBossMiniHp
-        ..spawning = true
-        ..spawnAnim = 0
-        ..fireCooldown = 0.6);
-    }
   }
 
   void _hitPlayer(Tank p) {
@@ -1224,8 +1187,8 @@ class _BattleCityGameState extends State<BattleCityGame>
     if (_isBossLevel) {
       if (!_bossSpawned) return;
       final bossAlive = enemies.any((e) => e.isBoss && e.alive);
-      final miniAlive = enemies.any((e) => e.isMiniBoss && e.alive);
-      if (!bossAlive && !miniAlive) {
+      // 击破 Boss 本体即通关,残留僚机随关卡切换清场(节奏更紧凑)。
+      if (!bossAlive) {
         _levelClearStartScore = score;
         _levelClearBonus = _computeLevelBonus();
         score += _levelClearBonus;
@@ -1661,7 +1624,11 @@ class _BattleCityGameState extends State<BattleCityGame>
         break;
       }
     }
-    final txt = boss != null ? 'HP ${boss.hp}' : '分裂体 ×$_miniRemaining';
+    final name = _bossTier > 0
+        ? kBossTiers[(_bossTier - 1).clamp(0, kBossTiers.length - 1)].name
+        : 'BOSS';
+    final hp = boss?.hp ?? _bossHpShown;
+    final txt = '$name HP $hp';
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1855,7 +1822,7 @@ class _BattleCityGameState extends State<BattleCityGame>
     );
   }
 
-  // ---- 通关结算面板(击败 Boss 虎二后)----
+  // ---- 通关结算面板(击败最终 Boss 虎王后)----
   Widget _buildVictory() {
     final p = (_victoryT / 3.0).clamp(0.0, 1.0);
     final titleT = (p / 0.2).clamp(0.0, 1.0);
@@ -1900,8 +1867,8 @@ class _BattleCityGameState extends State<BattleCityGame>
                     const SizedBox(height: 6),
                     Opacity(
                       opacity: titleT,
-                      child: const Text('虎二已被击败',
-                          style: TextStyle(
+                      child: Text('${kBossTiers.last.name}已被击败',
+                          style: const TextStyle(
                               color: Color(0xFFCCCCCC),
                               fontSize: 13,
                               fontFamily: 'monospace',
@@ -1909,7 +1876,8 @@ class _BattleCityGameState extends State<BattleCityGame>
                     ),
                     const SizedBox(height: 20),
                     _rewardLine('击毁坦克', '×$_killed', p, 0.16),
-                    _rewardLine('终关击破 Boss', '+$kBossKillBonus', p, 0.28),
+                    _rewardLine('终关击破 Boss', '+${kBossTiers.last.killBonus}',
+                        p, 0.28),
                     if (baseAlive) _rewardLine('基地完好', '+500', p, 0.40),
                     if (lives > 0)
                       _rewardLine('剩余生命 ×$lives', '+${lives * 200}', p, 0.52),
@@ -2230,7 +2198,8 @@ class _BattleCityGameState extends State<BattleCityGame>
     switch (bytes[0]) {
       case kMsgSnapshot:
         if (_role == NetRole.guest) {
-          _pending = Snapshot.fromBytes(bytes);
+          final s = Snapshot.fromBytes(bytes);
+          if (s != null) _pendingQueue.add(s);
         }
         break;
       case kMsgInput:
@@ -2253,12 +2222,13 @@ class _BattleCityGameState extends State<BattleCityGame>
     setState(() => _disconnected = true);
   }
 
-  /// guest:应用最近一帧 host 快照(若有)。
+  /// guest:顺序应用本帧到达的所有 host 快照(全量状态,逐帧应用以保留地形差量)。
   void _drainPendingSnapshot() {
-    final s = _pending;
-    if (s == null) return;
-    _pending = null;
-    _applySnapshot(s);
+    if (_pendingQueue.isEmpty) return;
+    for (final s in _pendingQueue) {
+      _applySnapshot(s);
+    }
+    _pendingQueue.clear();
   }
 
   /// guest:把 host 快照覆盖到本地 _scene。
@@ -2269,18 +2239,18 @@ class _BattleCityGameState extends State<BattleCityGame>
     lives = s.lives;
     level = s.level;
     _isBossLevel = s.isBossLevel;
+    _bossTier = bossTierForLevel(s.level);
     baseAlive = s.baseAlive;
     _bossHpShown = s.bossHpShown;
-    _miniRemaining = s.miniRemaining;
+    _bossMaxHp = s.bossMaxHp;
     _enemyRemaining = s.enemyRemaining;
     _freezeTime = s.freezeActive ? 1 : 0; // 非零即冻结态(供 _onTick 行 353 同步)
     _time = s.time;
 
-    // 地形:仅当版本变化(砖墙/装甲改变/切关)才替换 grid + 重建树丛 + 重绘地形。
-    // 客机不再每帧全量重绘地形(原先的卡顿主因)。
-    if (s.gridSeq != _lastGridSeq) {
-      _lastGridSeq = s.gridSeq;
-      grid = s.grid;
+    // 地形:仅当本帧快照"携带 grid"(地形版本变化)才替换 + 重建树丛 + 重绘。
+    // 差量同步下,无 grid 的帧仅更新版本号,避免误判与重复重绘。
+    if (s.hasGrid) {
+      grid = s.grid!;
       _scene.grid = grid;
       _rebuildTreeRects();
       _terrainRepaint.value = _terrainRepaint.value + 1;
@@ -2379,6 +2349,7 @@ class _BattleCityGameState extends State<BattleCityGame>
     dst.shieldTime = src.shieldTime;
     dst.isBoss = src.isBoss;
     dst.isMiniBoss = src.isMiniBoss;
+    if (src.isBoss) dst.maxHp = _bossMaxHp; // 血条比例需要总血量
   }
 
   /// 复制快照坦克为新渲染对象(首次出现时 snap 入位)。
@@ -2395,6 +2366,7 @@ class _BattleCityGameState extends State<BattleCityGame>
       ..alive = s.alive
       ..isBoss = s.isBoss
       ..isMiniBoss = s.isMiniBoss
+      ..maxHp = s.isBoss ? _bossMaxHp : 1
       ..bulletLevel = s.bulletLevel
       ..hp = s.hp
       ..armorHp = s.armorHp
@@ -2420,6 +2392,7 @@ class _BattleCityGameState extends State<BattleCityGame>
     if (link == null || !link.isConnected) return;
     _netFrame++;
     if (_netFrame % 2 == 0) return; // 隔帧下行 ~30Hz,降蓝牙带宽与客机反序列化/GC 压力
+    final includeGrid = _lastSentGridSeq != _gridSeq; // 地形未变则只发 seq,差分带宽
     final remaining = _queue.isEmpty ? 0 : (_queue.length - _killed);
     link.send(Snapshot(
       phase: phase,
@@ -2430,17 +2403,18 @@ class _BattleCityGameState extends State<BattleCityGame>
       baseAlive: baseAlive,
       freezeActive: _freezeTime > 0,
       bossHpShown: _bossHpShown,
-      miniRemaining: _miniRemaining,
+      bossMaxHp: _bossMaxHp,
       enemyRemaining: remaining,
       gridSeq: _gridSeq,
       time: _time,
-      grid: grid,
+      grid: includeGrid ? grid : null, // 大部分帧只带 4 字节 seq,而非 676 字节地形
       players: players,
       enemies: enemies,
       bullets: bullets,
       powerups: powerups,
       explosions: explosions,
     ).toBytes());
+    if (includeGrid) _lastSentGridSeq = _gridSeq;
   }
 
   /// guest:上行本地输入(语义=玩家1,host 收到后写入其 _dir2/_fire2)。

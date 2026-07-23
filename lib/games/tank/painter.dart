@@ -394,8 +394,8 @@ void _drawBoss(Canvas c, Tank t, double time, bool freezeActive) {
     _drawSpawnStar(c, center, t.spawnAnim);
     return;
   }
-  final s = t.size / kTank; // 缩放倍数(Boss=3)
-  final lowHp = t.hp <= kBossPhase3Hp;
+  final s = t.size / kTank; // 缩放倍数(Boss)
+  final lowHp = t.maxHp > 0 && t.hp / t.maxHp <= kBossPhase3Frac;
   final flash = t.hitFlashTime > 0 || (lowHp && (time * 6).floor() % 2 == 0);
   final body = flash ? const Color(0xFFFFE0B2) : const Color(0xFFC62828);
   _pBody.color = body;
@@ -441,7 +441,7 @@ void _drawBossHpBar(Canvas c, Tank t) {
   final y = t.pos.dy - 7;
   c.drawRect(
       Rect.fromLTWH(x - 1, y - 1, w + 2, 5), Paint()..color = const Color(0xDD000000));
-  final frac = (t.hp / kBossHp).clamp(0.0, 1.0);
+  final frac = (t.maxHp > 0 ? t.hp / t.maxHp : 0.0).clamp(0.0, 1.0);
   final col = frac > 0.66
       ? const Color(0xFF66BB6A)
       : (frac > 0.33 ? const Color(0xFFFFC107) : const Color(0xFFEF5350));

@@ -105,7 +105,7 @@ class _DebugOverlayState extends State<DebugOverlay>
           const SizedBox(height: 1),
           ValueListenableBuilder<String>(
             valueListenable: _fps.label,
-            builder: (_, v, __) => Text(
+            builder: (_, v, child) => Text(
               v,
               style: const TextStyle(
                 color: Color(0xFFFFD54A),
@@ -208,12 +208,12 @@ class _DebugPanelState extends State<_DebugPanel> {
               _section('性能'),
               ValueListenableBuilder<String>(
                 valueListenable: _fps.label,
-                builder: (_, v, __) => _kv('帧率', v),
+                builder: (_, v, child) => _kv('帧率', v),
               ),
               const Divider(height: 18, color: Color(0xFF444444)),
               ValueListenableBuilder<GameDebug?>(
                 valueListenable: kActiveGameDebug,
-                builder: (_, g, __) {
+                builder: (_, g, child) {
                   if (g == null) {
                     return const _Kv('当前游戏', '未进入(在首页)');
                   }

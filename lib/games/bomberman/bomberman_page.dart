@@ -2,6 +2,7 @@
 // 人 vs AI(多敌人,游走+追击+避炸弹),生命制,过关递增。纯单机;最高分本地保存。
 // 实时引擎用 Ticker + CustomPainter(与坦克同款高效画法),复用坦克的 SoundService。
 
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -12,8 +13,11 @@ import '../../debug/game_debug_registry.dart';
 import '../../shared/best_score_store.dart';
 import '../../shared/bgm_synth.dart';
 import '../../shared/game_shell.dart';
+import '../../shared/net/p2p_link.dart';
 import '../../shared/swipe_detector.dart';
+import '../tank/net/wire.dart'; // NetRole(与坦克联机共用)
 import '../tank/sound.dart';
+import 'net/bomber_wire.dart';
 
 const int _cols = 13;
 const int _rows = 13;
@@ -46,13 +50,16 @@ class _Player extends _Mover {
   int lives, maxBombs, flameRange, activeBombs;
   double speed, invuln = 0;
   bool alive = true;
-  _Player()
+  int id = 0; // 0 = P1 / 1 = P2
+  int homeCol = 1, homeRow = 1; // 复活点
+  int score = 0; // 联机计分(炸砖块)
+  _Player({int col = 1, int row = 1, this.invuln = 0})
       : lives = 3,
         maxBombs = 1,
         flameRange = 2,
         activeBombs = 0,
         speed = _kPlayerSpeed,
-        super(1, 1);
+        super(col, row);
 }
 
 enum _EnemyType { wanderer, chaser }
@@ -67,9 +74,9 @@ class _Enemy extends _Mover {
 }
 
 class _Bomb {
-  final int col, row, range;
+  final int col, row, range, owner;
   double fuse;
-  _Bomb(this.col, this.row, this.range, this.fuse);
+  _Bomb(this.col, this.row, this.range, this.fuse, {this.owner = 0});
 }
 
 class _PowerUp {
@@ -108,7 +115,16 @@ const List<SwipeDir> _allDirs = [
 ];
 
 class BomberPage extends StatefulWidget {
-  const BomberPage({super.key});
+  final NetRole role;
+  final P2pLink? link;
+  final bool autoStart;
+  final bool coop; // 双人闯关(同屏):P1 下方 / P2 上方,均本地控制
+  const BomberPage(
+      {super.key,
+      this.role = NetRole.offline,
+      this.link,
+      this.autoStart = true,
+      this.coop = false});
   @override
   State<BomberPage> createState() => _BomberPageState();
 }
@@ -132,6 +148,25 @@ class _BomberPageState extends State<BomberPage>
   int _score = 0, _best = 0;
   bool _started = false, _paused = false, _over = false, _cleared = false;
 
+  // ---- 联机(双人蓝牙) ----
+  _Player? _player2; // 对手(主机:本地模拟;客机:快照渲染)
+  final List<SwipeDir> _held2 = []; // 主机控制 _player2 的方向栈
+  int _gridSeq = 0;
+  int _lastGridSeq = -1;
+  int _netWinner = 0; // 0 无 / 1 P1 / 2 P2
+  bool _netEnded = false;
+  bool _disconnected = false;
+  BomberSnapshot? _pending; // 客机待应用快照
+  SwipeDir? _remoteDir; // 客机本地方向(上行)
+  bool _remoteBombQueued = false; // 客机待上行放雷边沿
+  double _netSendAcc = 0;
+  StreamSubscription<Uint8List>? _linkSub;
+  bool get _isNet => widget.link != null;
+  bool get _isCoop => widget.coop;
+  bool get _isHost => widget.role == NetRole.host;
+  bool get _isGuest => widget.role == NetRole.guest;
+  int get _localId => _isHost ? 0 : 1;
+
   final List<SwipeDir> _held = []; // 按住的方向栈(支持多指/换向)
   final Random _rng = Random();
   final FocusNode _focus = FocusNode();
@@ -147,7 +182,13 @@ class _BomberPageState extends State<BomberPage>
   ];
 
   bool get _playing =>
-      _started && !_paused && !_over && !_cleared && _player.alive;
+      _started &&
+      !_paused &&
+      !_over &&
+      !_cleared &&
+      (_isCoop
+          ? (_player.alive || (_player2?.alive ?? false))
+          : _player.alive);
 
   @override
   void initState() {
@@ -158,15 +199,24 @@ class _BomberPageState extends State<BomberPage>
     _snd.init(); // 异步预加载,失败忽略
     _bgm = ChiptuneBgm(theme: BgmTheme.bounce);
     _bgm.init();
+    if (_isCoop) {
+      // 双人闯关锁定竖屏
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    }
+    if (_isNet) _setupNet();
+    if (widget.autoStart) _start();
   }
 
   @override
   void dispose() {
+    _linkSub?.cancel();
     _ticker.dispose();
     _repaint.dispose();
     _focus.dispose();
     _snd.dispose();
     _bgm.dispose();
+    widget.link?.close();
+    if (_isCoop) SystemChrome.setPreferredOrientations([]);
     super.dispose();
   }
 
@@ -179,8 +229,24 @@ class _BomberPageState extends State<BomberPage>
   }
 
   void _onTick(Duration elapsed) {
-    final dt = ((elapsed - _lastElapsed).inMicroseconds / 1e6).clamp(0.0, 0.05);
+    final dt =
+        ((elapsed - _lastElapsed).inMicroseconds / 1e6).clamp(0.0, 0.05);
     _lastElapsed = elapsed;
+    // 联机收发:即使非 playing 也要跑(驱动客机结算 / 断线检测)
+    if (_isNet) {
+      if (_isHost) {
+        if (!_disconnected) {
+          _netSendAcc += dt;
+          if (_netSendAcc >= 1 / 30) {
+            _netSendAcc = 0;
+            _sendSnapshot();
+          }
+        }
+      } else {
+        _drainSnapshot();
+        if (_playing) _sendInput();
+      }
+    }
     if (dt <= 0 || !_playing) return;
     _update(dt);
     _repaint.value = (_repaint.value + 1) & 0x3fffffff;
@@ -207,6 +273,60 @@ class _BomberPageState extends State<BomberPage>
         if (_isBorder(r, c) || _isPillar(r, c)) _grid[r][c] = 2;
       }
     }
+    if (_isNet) {
+      // 联机:双方出生点周围留安全区(主机=左上,客机=右下;按本地视角对齐)
+      final myC = _isHost ? 1 : _cols - 2;
+      final myR = _isHost ? 1 : _rows - 2;
+      final foeC = _isHost ? _cols - 2 : 1;
+      final foeR = _isHost ? _rows - 2 : 1;
+      for (int r = 1; r < _rows - 1; r++) {
+        for (int c = 1; c < _cols - 1; c++) {
+          if (_grid[r][c] != 0) continue;
+          if ((c - myC).abs() + (r - myR).abs() <= 2) continue;
+          if ((c - foeC).abs() + (r - foeR).abs() <= 2) continue;
+          if (_rng.nextDouble() < 0.74) _grid[r][c] = 1;
+        }
+      }
+      _player
+        ..col = myC
+        ..row = myR
+        ..dir = null
+        ..t = 0
+        ..id = _localId
+        ..invuln = _kInvuln
+        ..activeBombs = 0
+        ..alive = true
+        ..lives = 3
+        ..maxBombs = 1
+        ..flameRange = 2
+        ..speed = _kPlayerSpeed
+        ..score = 0
+        ..homeCol = myC
+        ..homeRow = myR;
+      _player2 = _Player(col: foeC, row: foeR, invuln: _kInvuln)
+        ..alive = true
+        ..id = 1 - _localId
+        ..lives = 3
+        ..maxBombs = 1
+        ..flameRange = 2
+        ..speed = _kPlayerSpeed
+        ..score = 0
+        ..homeCol = foeC
+        ..homeRow = foeR;
+      _enemies.clear();
+      _gridSeq++;
+      _lastGridSeq = -1;
+      _netWinner = 0;
+      _netEnded = false;
+      _bombs.clear();
+      _flame.clear();
+      _powers.clear();
+      _vfx.clear();
+      _shakeTimer = 0;
+      _held.clear();
+      _held2.clear();
+      return;
+    }
     // 砖块:内部非柱、且离玩家出生点(1,1)曼哈顿>2 的格随机放砖
     for (int r = 1; r < _rows - 1; r++) {
       for (int c = 1; c < _cols - 1; c++) {
@@ -221,8 +341,29 @@ class _BomberPageState extends State<BomberPage>
       ..row = 1
       ..dir = null
       ..t = 0
+      ..id = 0
       ..invuln = _kInvuln
-      ..activeBombs = 0;
+      ..activeBombs = 0
+      ..alive = true
+      ..homeCol = 1
+      ..homeRow = 1
+      ..score = 0;
+    if (_isCoop) {
+      // 双人闯关:第二个玩家出生在右上角(1,11),与 P1 分隔
+      _player2 = _Player(col: _cols - 2, row: 1, invuln: _kInvuln)
+        ..alive = true
+        ..id = 1
+        ..lives = 3
+        ..maxBombs = 1
+        ..flameRange = 2
+        ..speed = _kPlayerSpeed
+        ..score = 0
+        ..homeCol = _cols - 2
+        ..homeRow = 1;
+      _held2.clear();
+    } else {
+      _player2 = null;
+    }
     // 敌人:远角生成,数量随关卡
     _enemies.clear();
     _bombs.clear();
@@ -293,11 +434,15 @@ class _BomberPageState extends State<BomberPage>
     _paused = false;
     _over = false;
     _cleared = false;
+    _netEnded = false;
+    _netWinner = 0;
+    _disconnected = false;
+    _pending = null;
     _player.invuln = _kInvuln;
     _lastElapsed = Duration.zero;
     _snd.play('start');
     _syncTicker();
-    _bgm.start();
+    if (widget.autoStart && !_isGuest) _bgm.start();
     setState(() {});
   }
 
@@ -318,6 +463,10 @@ class _BomberPageState extends State<BomberPage>
   void _newGame() {
     _ticker.stop();
     _bgm.stop();
+    if (_isNet) {
+      _start(); // 联机:直接重开本局
+      return;
+    }
     _level = 1;
     _score = 0;
     _player
@@ -399,6 +548,11 @@ class _BomberPageState extends State<BomberPage>
 
   // ---- 输入 ----
   void _pressDir(SwipeDir d) {
+    if (_isGuest) {
+      // 客机:本地输入只上行,不直接模拟
+      _remoteDir = d;
+      return;
+    }
     if (!_started && !_over) _start();
     if (_over || _cleared) return;
     _held.remove(d);
@@ -467,16 +621,25 @@ class _BomberPageState extends State<BomberPage>
   }
 
   void _placeBomb() {
+    if (_isGuest) {
+      _remoteBombQueued = true;
+      return;
+    }
     if (!_playing) {
       if (!_started && !_over) _start();
       return;
     }
-    if (_player.activeBombs >= _player.maxBombs) return;
-    final k = _key(_player.col, _player.row);
+    _placeBombFor(_player);
+  }
+
+  void _placeBombFor(_Player p) {
+    if (!p.alive) return;
+    if (p.activeBombs >= p.maxBombs) return;
+    final k = _key(p.col, p.row);
     if (_bombs.containsKey(k)) return;
-    if (_grid[_player.row][_player.col] != 0) return;
-    _bombs[k] = _Bomb(_player.col, _player.row, _player.flameRange, _kFuse);
-    _player.activeBombs++;
+    if (_grid[p.row][p.col] != 0) return;
+    _bombs[k] = _Bomb(p.col, p.row, p.flameRange, _kFuse, owner: p.id);
+    p.activeBombs++;
     _snd.play('shoot');
     HapticFeedback.selectionClick();
   }
@@ -518,36 +681,43 @@ class _BomberPageState extends State<BomberPage>
     }
 
     // 移动
-    _advance(_player, dt, _player.speed, _playerArrive);
-    for (final e in _enemies) {
-      if (e.alive) _advance(e, dt, e.speed, () => _enemyArrive(e));
+    if (_player.alive) _advance(_player, dt, _player.speed, _playerArrive);
+    if (_player2 != null && (_isHost || _isCoop) && _player2!.alive) {
+      _advance(_player2!, dt, _player2!.speed, _player2Arrive);
     }
-
-    // 撞怪判负(无敌期除外):用连续格坐标算距离,同格或迎面穿过都算撞上
-    _resolveEnemyContact();
+    if (!_isNet) {
+      for (final e in _enemies) {
+        if (e.alive) _advance(e, dt, e.speed, () => _enemyArrive(e));
+      }
+      // 撞怪判负(无敌期除外):用连续格坐标算距离,同格或迎面穿过都算撞上
+      _resolveEnemyContact();
+    }
 
     // 火焰伤害(当前格或半程后的目标格)
     if (_flame.isNotEmpty) _resolveFlameHits();
 
-    // 清死亡敌人
-    if (_enemies.any((e) => !e.alive)) {
+    // 清死亡敌人(单机)
+    if (_enemies.isNotEmpty && _enemies.any((e) => !e.alive)) {
       _enemies.removeWhere((e) => !e.alive);
       setState(() {});
     }
 
-    // 道具拾取
-    if (_player.alive) {
-      final p = _powers;
-      for (int i = p.length - 1; i >= 0; i--) {
-        if (p[i].col == _player.col && p[i].row == _player.row) {
-          _collect(p[i]);
-          p.removeAt(i);
+    // 道具拾取(双方)
+    if (_player.alive) _pickupFor(_player);
+    if (_player2 != null && _player2!.alive) _pickupFor(_player2!);
+
+    // 胜负判定
+    if (_isNet) {
+      if (_player2 != null) {
+        if (!_player.alive && !_player2!.alive) {
+          _endNet(0); // 同归于尽
+        } else if (!_player.alive) {
+          _endNet(2); // P1(主机)亡 → P2 胜
+        } else if (!_player2!.alive) {
+          _endNet(1); // P2 亡 → P1 胜
         }
       }
-    }
-
-    // 通关
-    if (_enemies.isEmpty && !_over && !_cleared) {
+    } else if (_enemies.isEmpty && !_over && !_cleared) {
       _onLevelClear();
     }
   }
@@ -560,36 +730,241 @@ class _BomberPageState extends State<BomberPage>
     return null;
   }
 
+  // 主机控制 _player2(远程对手)的输入处理
+  void _applyInput2(SwipeDir d) {
+    final p = _player2!;
+    if (!_playing) return;
+    if (p.dir != null && _opp(d) == p.dir) {
+      final (dx, dy) = _delta(p.dir!);
+      final nc = p.col + dx, nr = p.row + dy;
+      if (!_cellSolid(nc, nr)) {
+        p.col = nc;
+        p.row = nr;
+        p.dir = _opp(p.dir!);
+        p.t = 1 - p.t;
+        final nd = _player2Arrive();
+        p.dir = nd;
+        if (nd == null) p.t = 0;
+      } else {
+        p.dir = d;
+      }
+    } else {
+      p.dir = d;
+    }
+  }
+
+  SwipeDir? _player2Arrive() {
+    if (_held2.isNotEmpty) {
+      final d = _held2.last;
+      if (!_cellSolidNeighbor(_player2!.col, _player2!.row, d)) return d;
+    }
+    return null;
+  }
+
+  // ---- 联机收发 ----
+  void _setupNet() {
+    final link = widget.link!;
+    _linkSub = link.incoming.listen(
+      _onNetReceive,
+      onDone: () {
+        if (!mounted) return;
+        _bgm.stop();
+        if (mounted) setState(() => _disconnected = true);
+      },
+    );
+  }
+
+  int _dirToIdx(SwipeDir? d) => d == null
+      ? 255
+      : const [SwipeDir.up, SwipeDir.down, SwipeDir.left, SwipeDir.right]
+          .indexOf(d);
+  SwipeDir? _idxToDir(int i) => i == 255
+      ? null
+      : const [SwipeDir.up, SwipeDir.down, SwipeDir.left, SwipeDir.right][i];
+
+  _Player? _playerById(int id) =>
+      _player.id == id ? _player : (_player2?.id == id ? _player2 : null);
+
+  void _onNetReceive(Uint8List bytes) {
+    if (bytes.isEmpty) return;
+    if (bytes[0] == kBomberMsgSnapshot) {
+      final s = BomberSnapshot.decode(bytes);
+      if (s != null) _pending = s;
+    } else if (bytes[0] == kBomberMsgInput) {
+      final f = BomberInput.decode(bytes);
+      if (f != null) _onInput(f);
+    }
+  }
+
+  // 主机:应用客机方向帧
+  void _onInput(BomberInput f) {
+    if (_player2 == null || !_player2!.alive) return;
+    if (f.dirIdx != 255) {
+      final d = _idxToDir(f.dirIdx);
+      if (d != null) {
+        _held2.remove(d);
+        _held2.add(d);
+        _applyInput2(d);
+      }
+    } else {
+      _held2.clear();
+    }
+    if (f.bomb) _placeBombFor(_player2!);
+  }
+
+  // 客机:上行本地输入
+  void _sendInput() {
+    if (_disconnected) return;
+    final f = BomberInput(
+      dirIdx: _remoteDir == null ? 255 : _dirToIdx(_remoteDir!),
+      bomb: _remoteBombQueued,
+    );
+    _remoteBombQueued = false;
+    widget.link!.send(f.encode());
+  }
+
+  void _drainSnapshot() {
+    final s = _pending;
+    if (s == null) return;
+    _pending = null;
+    _applySnapshot(s);
+  }
+
+  BomberPlayerSnap _toSnap(_Player p) => BomberPlayerSnap(
+        col: p.col,
+        row: p.row,
+        t: p.t,
+        dirIdx: _dirToIdx(p.dir),
+        alive: p.alive,
+        invuln: p.invuln,
+        lives: p.lives,
+        maxBombs: p.maxBombs,
+        flameRange: p.flameRange,
+        speed: p.speed,
+        activeBombs: p.activeBombs,
+        score: p.score,
+      );
+
+  void _sendSnapshot() {
+    final players = [_toSnap(_player), _toSnap(_player2!)]; // [P1, P2]
+    final bombs = _bombs.values
+        .map((b) => BomberBombSnap(
+            col: b.col, row: b.row, range: b.range, fuse: b.fuse, owner: b.owner))
+        .toList();
+    final flames = _flame.entries
+        .map((e) => BomberFlameSnap(
+            col: e.key % _cols, row: e.key ~/ _cols, rem: e.value))
+        .toList();
+    final powers = _powers
+        .map((p) => BomberPowerSnap(col: p.col, row: p.row, kind: p.kind.index))
+        .toList();
+    final snap = BomberSnapshot(
+      level: _level,
+      over: _netEnded,
+      winner: _netWinner,
+      gridSeq: _gridSeq,
+      grid: _grid,
+      players: players,
+      bombs: bombs,
+      flames: flames,
+      powers: powers,
+    );
+    widget.link!.send(snap.encode());
+  }
+
+  void _applySnapshot(BomberSnapshot s) {
+    if (s.gridSeq != _lastGridSeq) {
+      _grid.clear();
+      for (final row in s.grid) {
+        _grid.add(List<int>.from(row));
+      }
+      _lastGridSeq = s.gridSeq;
+    }
+    // 角色映射:players[0]=P1(远程), players[1]=P2(本地)
+    _applyPlayerSnap(_player2!, s.players[0]);
+    _applyPlayerSnap(_player, s.players[1]);
+    _bombs.clear();
+    for (final b in s.bombs) {
+      _bombs[_key(b.col, b.row)] =
+          _Bomb(b.col, b.row, b.range, b.fuse, owner: b.owner);
+    }
+    _flame.clear();
+    for (final f in s.flames) {
+      _flame[_key(f.col, f.row)] = f.rem;
+    }
+    _powers.clear();
+    for (final p in s.powers) {
+      _powers.add(_PowerUp(p.col, p.row, _Power.values[p.kind]));
+    }
+    _level = s.level;
+    if (s.over) {
+      _netEnded = true;
+      _netWinner = s.winner;
+      _over = true;
+      _bgm.stop();
+    }
+    _repaint.value = (_repaint.value + 1) & 0x3fffffff;
+  }
+
+  void _applyPlayerSnap(_Player p, BomberPlayerSnap s) {
+    p.col = s.col;
+    p.row = s.row;
+    p.t = s.t;
+    p.dir = _idxToDir(s.dirIdx);
+    p.alive = s.alive;
+    p.invuln = s.invuln;
+    p.lives = s.lives;
+    p.maxBombs = s.maxBombs;
+    p.flameRange = s.flameRange;
+    p.speed = s.speed;
+    p.activeBombs = s.activeBombs;
+    p.score = s.score;
+  }
+
+  void _endNet(int winner) {
+    _netWinner = winner;
+    _netEnded = true;
+    _over = true;
+    _snd.play('gameover');
+    _bgm.stop();
+    setState(() {});
+  }
+
+  /// 敌人追击的目标玩家(双人闯关时选择最近的一个)。
+  _Player? _chaseTarget(_Enemy e) {
+    final p1 = _player.alive ? _player : null;
+    final p2 = (_isCoop && _player2 != null && _player2!.alive) ? _player2! : null;
+    if (p1 != null && p2 != null) {
+      final d1 = (_player.col - e.col).abs() + (_player.row - e.row).abs();
+      final d2 =
+          (_player2!.col - e.col).abs() + (_player2!.row - e.row).abs();
+      return d1 <= d2 ? _player : _player2!;
+    }
+    return p1 ?? p2;
+  }
+
+  int _manhTo(_Enemy e, SwipeDir d, _Player t) {
+    final (dx, dy) = _delta(d);
+    return (t.col - (e.col + dx)).abs() + (t.row - (e.row + dy)).abs();
+  }
+
   SwipeDir? _enemyArrive(_Enemy e) {
     final valid = <SwipeDir>[];
     for (final d in _allDirs) {
       if (!_cellSolidNeighbor(e.col, e.row, d)) valid.add(d);
     }
     if (valid.isEmpty) return null;
-    // 追击型:始终选离玩家最近的有效方向
-    if (e.type == _EnemyType.chaser && _player.alive) {
-      valid.sort((a, b) {
-        final (ax, ay) = _delta(a);
-        final (bx, by) = _delta(b);
-        final da = (_player.col - (e.col + ax)).abs() +
-            (_player.row - (e.row + ay)).abs();
-        final db = (_player.col - (e.col + bx)).abs() +
-            (_player.row - (e.row + by)).abs();
-        return da.compareTo(db);
-      });
+    final target = _chaseTarget(e);
+    // 追击型:始终选离目标玩家最近的有效方向
+    if (e.type == _EnemyType.chaser && target != null) {
+      valid.sort((a, b) =>
+          _manhTo(e, a, target).compareTo(_manhTo(e, b, target)));
       return valid.first;
     }
-    // 游走型:概率追击,概率保持,否则随机
-    if (_player.alive && _rng.nextDouble() < 0.42) {
-      valid.sort((a, b) {
-        final (ax, ay) = _delta(a);
-        final (bx, by) = _delta(b);
-        final da = (_player.col - (e.col + ax)).abs() +
-            (_player.row - (e.row + ay)).abs();
-        final db = (_player.col - (e.col + bx)).abs() +
-            (_player.row - (e.row + by)).abs();
-        return da.compareTo(db);
-      });
+    // 游走型:概率追击目标玩家,概率保持,否则随机
+    if (target != null && _rng.nextDouble() < 0.42) {
+      valid.sort((a, b) =>
+          _manhTo(e, a, target).compareTo(_manhTo(e, b, target)));
       return valid.first;
     }
     if (e.dir != null && valid.contains(e.dir) && _rng.nextDouble() < 0.6) {
@@ -644,7 +1019,8 @@ class _BomberPageState extends State<BomberPage>
     final bk = _key(b.col, b.row);
     if (_chainDone.contains(bk)) return;
     _chainDone.add(bk);
-    _player.activeBombs = max(0, _player.activeBombs - 1);
+    final owner = _playerById(b.owner);
+    if (owner != null) owner.activeBombs = max(0, owner.activeBombs - 1);
     _snd.play('explosion');
     if (_vfx.length < 24) {
       _vfx.add(_Vfx(b.col.toDouble() + 0.5, b.row.toDouble() + 0.5, 0.35));
@@ -660,7 +1036,12 @@ class _BomberPageState extends State<BomberPage>
         cells.add(k);
         if (_grid[r][c] == 1) {
           _grid[r][c] = 0;
-          _score += 5;
+          _gridSeq++;
+          if (_isNet) {
+            if (owner != null) owner.score += 5;
+          } else {
+            _score += 5;
+          }
           if (_vfx.length < 24) {
             _vfx.add(_Vfx(c.toDouble() + 0.5, r.toDouble() + 0.5, 0.28));
           }
@@ -692,31 +1073,37 @@ class _BomberPageState extends State<BomberPage>
 
   /// 玩家撞到敌人 → 受伤(无敌期除外)。同格或迎面穿过都会触发。
   void _resolveEnemyContact() {
-    if (!_player.alive || _player.invuln > 0) return;
-    final (px, py) = _cellPos(_player);
+    _checkContact(_player);
+    if (_isCoop && _player2 != null) _checkContact(_player2!);
+  }
+
+  void _checkContact(_Player p) {
+    if (!p.alive || p.invuln > 0) return;
+    final (px, py) = _cellPos(p);
     for (final e in _enemies) {
       if (!e.alive) continue;
       final (ex, ey) = _cellPos(e);
       final d2 = (px - ex) * (px - ex) + (py - ey) * (py - ey);
       if (d2 < 0.6 * 0.6) {
-        _hurtPlayer();
+        _hurtPlayer(p);
         return;
       }
     }
   }
 
-  void _resolveFlameHits() {
-    bool hitPlayer = false;
-    if (_player.alive && _player.invuln <= 0) {
-      if (_flame.containsKey(_key(_player.col, _player.row))) {
-        hitPlayer = true;
-      } else if (_player.dir != null && _player.t > 0.5) {
-        final (dx, dy) = _delta(_player.dir!);
-        if (_flame.containsKey(_key(_player.col + dx, _player.row + dy))) {
-          hitPlayer = true;
-        }
-      }
+  bool _flameHit(_Mover m) {
+    if (_flame.containsKey(_key(m.col, m.row))) return true;
+    if (m.dir != null && m.t > 0.5) {
+      final (dx, dy) = _delta(m.dir!);
+      if (_flame.containsKey(_key(m.col + dx, m.row + dy))) return true;
     }
+    return false;
+  }
+
+  void _resolveFlameHits() {
+    final hitLocal = _player.alive && _player.invuln <= 0 && _flameHit(_player);
+    final hitRemote =
+        _player2 != null && _player2!.alive && _player2!.invuln <= 0 && _flameHit(_player2!);
     for (final e in _enemies) {
       if (!e.alive) continue;
       bool hit = _flame.containsKey(_key(e.col, e.row));
@@ -736,31 +1123,44 @@ class _BomberPageState extends State<BomberPage>
         }
       }
     }
-    if (hitPlayer) _hurtPlayer();
-    if (hitPlayer || _score >= 0) _updateBest();
+    if (hitLocal) _hurtPlayer(_player);
+    if (hitRemote) _hurtPlayer(_player2!);
+    if (hitLocal || hitRemote || _score >= 0) _updateBest();
   }
 
-  void _hurtPlayer() {
-    _player.lives--;
+  void _hurtPlayer(_Player p) {
+    p.lives--;
     _snd.play('hit');
     HapticFeedback.heavyImpact();
-    if (_player.lives <= 0) {
-      _player.alive = false;
-      _over = true;
-      _snd.play('gameover');
-      _ticker.stop();
-      _bgm.stop();
+    if (p.lives <= 0) {
+      p.alive = false;
+      p.dir = null;
+      p.t = 0;
+      if (_isCoop) {
+        // 双人闯关:双方都阵亡才算失败
+        if (!_player.alive && !_player2!.alive) {
+          _over = true;
+          _snd.play('gameover');
+          _ticker.stop();
+          _bgm.stop();
+        }
+      } else if (!_isNet) {
+        _over = true;
+        _snd.play('gameover');
+        _ticker.stop();
+        _bgm.stop();
+      }
       setState(() {});
       return;
     }
     // 复活到出生格(若被占则就近)
-    int rc = 1, rr = 1;
+    int rc = p.homeCol, rr = p.homeRow;
     if (_cellSolid(rc, rr) || _flame.containsKey(_key(rc, rr))) {
       outer:
       for (int rad = 1; rad < 4; rad++) {
         for (int r = 1; r <= rad; r++) {
           for (int c = 1; c <= rad; c++) {
-            if ((c == 1 && r == 1)) continue;
+            if (c == rc && r == rr) continue;
             if (!_cellSolid(c, r) && !_flame.containsKey(_key(c, r))) {
               rc = c;
               rr = r;
@@ -770,7 +1170,7 @@ class _BomberPageState extends State<BomberPage>
         }
       }
     }
-    _player
+    p
       ..col = rc
       ..row = rr
       ..dir = null
@@ -781,23 +1181,38 @@ class _BomberPageState extends State<BomberPage>
       ..flameRange = 2
       ..speed = _kPlayerSpeed
       ..activeBombs = 0;
-    _held.clear();
+    if (p == _player) {
+      _held.clear();
+    } else {
+      _held2.clear();
+    }
     setState(() {});
   }
 
-  void _collect(_PowerUp p) {
+  void _pickupFor(_Player p) {
+    if (!p.alive) return;
+    final ps = _powers;
+    for (int i = ps.length - 1; i >= 0; i--) {
+      if (ps[i].col == p.col && ps[i].row == p.row) {
+        _collect(p, ps[i]);
+        ps.removeAt(i);
+      }
+    }
+  }
+
+  void _collect(_Player p, _PowerUp pw) {
     _snd.play('powerup');
     HapticFeedback.mediumImpact();
     setState(() {
-      switch (p.kind) {
+      switch (pw.kind) {
         case _Power.bomb:
-          _player.maxBombs = min(6, _player.maxBombs + 1);
+          p.maxBombs = min(6, p.maxBombs + 1);
           break;
         case _Power.flame:
-          _player.flameRange = min(8, _player.flameRange + 1);
+          p.flameRange = min(8, p.flameRange + 1);
           break;
         case _Power.speed:
-          _player.speed = min(5.6, _player.speed + 0.5);
+          p.speed = min(5.6, p.speed + 0.5);
           break;
       }
     });
@@ -814,6 +1229,7 @@ class _BomberPageState extends State<BomberPage>
   }
 
   void _updateBest() {
+    if (_isNet) return;
     if (_score > _best) {
       _best = _score;
       BestScoreStore.setIfGreater(_bestKey, _best);
@@ -850,7 +1266,7 @@ class _BomberPageState extends State<BomberPage>
   @override
   Widget build(BuildContext context) {
     return GameShell(
-      title: '泡泡堂',
+      title: _isCoop ? '泡泡堂 · 双人闯关' : '泡泡堂',
       actions: [
         if (_started && !_over && !_cleared)
           IconButton(
@@ -875,61 +1291,43 @@ class _BomberPageState extends State<BomberPage>
             final maxH = c.maxHeight - 8;
             // 控件尺寸独立于棋盘格,保证方向键够大好按
             final ctrl = (c.maxWidth * 0.155).clamp(54.0, 68.0);
-            final reserveTop = 46.0; // HUD + 间距
+            final reserveTop = _isCoop ? (ctrl * 3 + 16) : 46.0; // 双人:上方 P2 操作区
             final reserveBottom = ctrl * 3 + 26; // 方向键 + 间距
             final cell =
                 min(maxW / _cols, (maxH - reserveTop - reserveBottom) / _rows)
                     .clamp(18.0, 38.0);
             final boardW = cell * _cols;
             final boardH = cell * _rows;
+            final board = _buildBoard(boardW, boardH, cell);
+            if (_isCoop) {
+              // 双人闯关(竖屏):P2 操作区在上方,P1 在下方,游戏区居中
+              return Column(
+                children: [
+                  _controls(ctrl,
+                      onDir: _onJoystickDir2, onBomb: _placeBomb2, p2: true),
+                  Expanded(
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _hud(),
+                          const SizedBox(height: 6),
+                          board,
+                        ],
+                      ),
+                    ),
+                  ),
+                  _controls(ctrl),
+                ],
+              );
+            }
             return Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   _hud(),
                   const SizedBox(height: 6),
-                  Transform.translate(
-                    offset: _shakeTimer > 0
-                        ? Offset((_rng.nextDouble() - 0.5) * cell * 0.28,
-                            (_rng.nextDouble() - 0.5) * cell * 0.28)
-                        : Offset.zero,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(6),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.45),
-                            blurRadius: 18,
-                            offset: const Offset(0, 6),
-                          ),
-                        ],
-                      ),
-                      child: SizedBox(
-                        width: boardW,
-                        height: boardH,
-                        child: Stack(
-                          children: [
-                            CustomPaint(
-                              size: Size(boardW, boardH),
-                              painter: _BomberPainter(
-                                grid: _grid,
-                                player: _player,
-                                enemies: _enemies,
-                                bombs: _bombs,
-                                flame: _flame,
-                                powers: _powers,
-                                vfx: _vfx,
-                                cell: cell,
-                                repaint: _repaint,
-                              ),
-                            ),
-                            if (!_started || _over || _paused || _cleared)
-                              _overlay(),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
+                  board,
                   const SizedBox(height: 10),
                   _controls(ctrl),
                 ],
@@ -941,7 +1339,99 @@ class _BomberPageState extends State<BomberPage>
     );
   }
 
+  Widget _buildBoard(double boardW, double boardH, double cell) {
+    return Transform.translate(
+      offset: _shakeTimer > 0
+          ? Offset((_rng.nextDouble() - 0.5) * cell * 0.28,
+              (_rng.nextDouble() - 0.5) * cell * 0.28)
+          : Offset.zero,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.45),
+              blurRadius: 18,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: SizedBox(
+          width: boardW,
+          height: boardH,
+          child: Stack(
+            children: [
+              CustomPaint(
+                size: Size(boardW, boardH),
+                painter: _BomberPainter(
+                  grid: _grid,
+                  player: _player,
+                  player2: _player2,
+                  enemies: _enemies,
+                  bombs: _bombs,
+                  flame: _flame,
+                  powers: _powers,
+                  vfx: _vfx,
+                  cell: cell,
+                  repaint: _repaint,
+                ),
+              ),
+              if (!_started || _over || _paused || _cleared) _overlay(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _hud() {
+    if (_isCoop) {
+      final alive = _enemies.where((e) => e.alive).length;
+      return SizedBox(
+        width: double.infinity,
+        child: Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            _chip('关卡', '$_level', const Color(0xFFFF8A4C)),
+            _chip('得分', '$_score', const Color(0xFFFFD54A)),
+            _chip('敌', '$alive', const Color(0xFFEF5350)),
+            _chip('P1❤', '${_player.lives}', const Color(0xFF42A5F5)),
+            if (_player2 != null)
+              _chip('P2❤', '${_player2!.lives}', const Color(0xFFFF5252)),
+            _chip('💣', '${_player.maxBombs}', const Color(0xFFB0BEC5)),
+            _chip('🔥', '${_player.flameRange}', const Color(0xFFFF7043)),
+          ],
+        ),
+      );
+    }
+    if (_isNet) {
+      final you = _player; // 本地
+      final foe = _player2 ?? _player;
+      final youName = _isHost ? 'P1' : 'P2';
+      final foeName = _isHost ? 'P2' : 'P1';
+      return SizedBox(
+        width: double.infinity,
+        child: Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            _chip('蓝牙',
+                _disconnected ? '断开' : '已连',
+                _disconnected
+                    ? const Color(0xFFEF5350)
+                    : const Color(0xFF66BB6A)),
+            _chip('你($youName)',
+                '${you.lives}❤ ${you.maxBombs}💣 ${you.flameRange}🔥',
+                const Color(0xFF42A5F5)),
+            _chip('对手($foeName)', '${foe.lives}❤',
+                const Color(0xFFFF5252)),
+          ],
+        ),
+      );
+    }
     final alive = _enemies.where((e) => e.alive).length;
     return SizedBox(
       width: double.infinity,
@@ -1012,7 +1502,40 @@ class _BomberPageState extends State<BomberPage>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (_cleared) ...[
+            if (_disconnected) ...[
+              const Text('对手已断开',
+                  style: TextStyle(
+                      color: Color(0xFFFF5252),
+                      fontSize: 26,
+                      fontWeight: FontWeight.bold,
+                      shadows: [Shadow(color: Color(0xFFFF5252), blurRadius: 18)])),
+              const SizedBox(height: 8),
+              const Text('蓝牙连接已丢失',
+                  style: TextStyle(color: Colors.white70, fontSize: 13)),
+              const SizedBox(height: 14),
+              _ovBtn('返回', const Color(0xFFFF8A4C),
+                  () => Navigator.of(context).maybePop()),
+            ] else if (_netEnded) ...[
+              Text(_netWinText(),
+                  style: TextStyle(
+                      color: _netWinner == _localId + 1
+                          ? const Color(0xFFFFD54A)
+                          : const Color(0xFFFF5252),
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      shadows: [
+                        Shadow(
+                            color: _netWinner == _localId + 1
+                                ? const Color(0xFFFFD54A)
+                                : const Color(0xFFFF5252),
+                            blurRadius: 18)
+                      ])),
+              const SizedBox(height: 8),
+              Text(_netWinSub(),
+                  style: const TextStyle(color: Colors.white70, fontSize: 13)),
+              const SizedBox(height: 14),
+              _ovBtn('再来一局', const Color(0xFFFFD54A), _start),
+            ] else if (_cleared) ...[
               Text('🎉 第 $_level 关 通过!',
                   style: const TextStyle(
                       color: Color(0xFFFFD54A),
@@ -1051,6 +1574,22 @@ class _BomberPageState extends State<BomberPage>
                       ])),
               const SizedBox(height: 14),
               _ovBtn('继续游戏', const Color(0xFFFF8A4C), _togglePause),
+            ] else if (_isCoop) ...[
+              const Text('泡泡堂 · 双人闯关',
+                  style: TextStyle(
+                      color: Color(0xFFFF8A4C),
+                      fontSize: 26,
+                      fontWeight: FontWeight.bold,
+                      shadows: [
+                        Shadow(color: Color(0xFFFF8A4C), blurRadius: 20)
+                      ])),
+              const SizedBox(height: 10),
+              const Text(
+                  'P1 操作区在下方 · P2 操作区在上方\n方向键移动 · 炸弹键放雷\n一起炸掉所有敌人即可过关',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white70, fontSize: 13)),
+              const SizedBox(height: 14),
+              _ovBtn('开始游戏', const Color(0xFFFF8A4C), _start),
             ] else ...[
               const Text('泡泡堂',
                   style: TextStyle(
@@ -1073,6 +1612,19 @@ class _BomberPageState extends State<BomberPage>
     );
   }
 
+  String _netWinText() {
+    if (_netWinner == _localId + 1) return '🏆 你赢了!';
+    if (_netWinner == 0) return '平局';
+    return '你输了';
+  }
+
+  String _netWinSub() {
+    if (_netWinner == 0) return '同归于尽';
+    final you = _localId + 1; // 1=P1, 2=P2
+    final foe = 3 - you;
+    return '你(P$you) 击败 对手(P$foe)';
+  }
+
   Widget _ovBtn(String text, Color color, VoidCallback onTap) {
     return TextButton(
       style: TextButton.styleFrom(
@@ -1086,7 +1638,13 @@ class _BomberPageState extends State<BomberPage>
     );
   }
 
-  Widget _controls(double btn) {
+  Widget _controls(double btn,
+      {ValueChanged<SwipeDir?>? onDir,
+      VoidCallback? onBomb,
+      bool p2 = false}) {
+    final d = onDir ?? _onJoystickDir;
+    final b = onBomb ?? _placeBomb;
+    final accent = p2 ? const Color(0xFFFF5252) : const Color(0xFFFF7043);
     return SizedBox(
       width: double.infinity,
       child: Row(
@@ -1097,12 +1655,12 @@ class _BomberPageState extends State<BomberPage>
           SizedBox(
             width: btn * 3,
             height: btn * 3,
-            child: _Joystick(onDir: _onJoystickDir),
+            child: _Joystick(onDir: d),
           ),
           // 炸弹键
           GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: _placeBomb,
+            onTap: b,
             child: Container(
               width: btn * 1.5,
               height: btn * 1.5,
@@ -1113,23 +1671,22 @@ class _BomberPageState extends State<BomberPage>
                   radius: 0.9,
                   colors: [Color(0xFF3A2A26), Color(0xFF171717)],
                 ),
-                border:
-                    Border.all(color: const Color(0xFFFF7043), width: 2.5),
-                boxShadow: const [
+                border: Border.all(color: accent, width: 2.5),
+                boxShadow: [
                   BoxShadow(
-                      color: Color(0x66FF7043), blurRadius: 14, offset: Offset(0, 3)),
+                      color: accent.withValues(alpha: 0.4),
+                      blurRadius: 14,
+                      offset: const Offset(0, 3)),
                 ],
               ),
               alignment: Alignment.center,
-              child: const Column(
+              child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text('💣', style: TextStyle(fontSize: 30)),
-                  Text('放雷',
+                  const Text('💣', style: TextStyle(fontSize: 30)),
+                  Text(p2 ? 'P2' : '放雷',
                       style: TextStyle(
-                          color: Color(0xFFFF7043),
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold)),
+                          color: accent, fontSize: 12, fontWeight: FontWeight.bold)),
                 ],
               ),
             ),
@@ -1140,6 +1697,10 @@ class _BomberPageState extends State<BomberPage>
   }
 
   void _onJoystickDir(SwipeDir? d) {
+    if (_isGuest) {
+      _remoteDir = d;
+      return;
+    }
     if (d != null) {
       _held.clear();
       _held.add(d);
@@ -1148,12 +1709,31 @@ class _BomberPageState extends State<BomberPage>
       _held.clear();
     }
   }
+
+  void _onJoystickDir2(SwipeDir? d) {
+    if (d != null) {
+      if (!_started && !_over) _start();
+      if (_over || _cleared) return;
+      _held2.clear();
+      _held2.add(d);
+      _applyInput2(d);
+    } else {
+      _held2.clear();
+    }
+  }
+
+  void _placeBomb2() {
+    if (!_started && !_over) _start();
+    if (!_playing || _over || _cleared) return;
+    if (_player2 != null) _placeBombFor(_player2!);
+  }
 }
 
 /// 泡泡堂绘制:地面/钢墙/砖块/道具/炸弹/火焰/敌人/玩家。霓虹抛光风。
 class _BomberPainter extends CustomPainter {
   final List<List<int>> grid;
   final _Player player;
+  final _Player? player2; // 联机对手(本地视角已在 _player)
   final List<_Enemy> enemies;
   final Map<int, _Bomb> bombs;
   final Map<int, double> flame;
@@ -1165,6 +1745,7 @@ class _BomberPainter extends CustomPainter {
   _BomberPainter({
     required this.grid,
     required this.player,
+    this.player2,
     required this.enemies,
     required this.bombs,
     required this.flame,
@@ -1220,6 +1801,16 @@ class _BomberPainter extends CustomPainter {
       if (!e.alive) continue;
       _drawBlob(canvas, e.posOf(cell), cell, e.color, false, e.dir,
           shadow: true, angry: e.type == _EnemyType.chaser);
+    }
+    // 对手(联机):先画在底层
+    if (player2 != null && player2!.alive) {
+      final blink =
+          player2!.invuln > 0 && (player2!.invuln * 10).floor() % 2 == 0;
+      if (!blink) {
+        _drawBlob(canvas, player2!.posOf(cell), cell, const Color(0xFFFF5252),
+            true, player2!.dir,
+            shadow: true);
+      }
     }
     // 玩家
     if (player.alive) {

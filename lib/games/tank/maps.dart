@@ -47,37 +47,68 @@ final List<LevelMap> kLevels = [
     '  BBB B BBB  ',
     '      S      ',
   ]),
-  LevelMap('关卡 3 · 迷宫', [
-    'B B B B B B B',
-    'B S B B B S B',
-    'B B B W W B B',
-    'B B  W   W  B',
-    'B B W T T W B',
-    'B   W T T W  ',
-    'B B W T T W B',
-    'B   W T T W  ',
-    'B B W T T W B',
-    'B B  W   W  B',
-    'B B B W W B B',
-    'B S B B B S B',
-    'B B B B B B B',
-  ]),
-  LevelMap('关卡 4 · 水乡', [
-    ' W W W W W W ',
+  LevelMap('关卡 3 · 哨塔阵地', [
+    ' B B B B B B ',
+    ' B S     S B ',
+    ' B B B B B B ',
     '             ',
-    'B B B S B B B',
-    'B B B S B B B',
-    '  WWW S WWW  ',
-    ' T T T   T T ',
-    '  WWW   WWW  ',
-    'B B B S B B B',
-    'B B B S B B B',
+    '   B     B   ',
+    '   B     B   ',
+    ' T       T   ',
+    '   B     B   ',
+    '   B     B   ',
     '             ',
-    ' W W W W W W ',
+    ' B S     S B ',
     ' B B B B B B ',
     '             ',
   ]),
-  LevelMap('关卡 5 · 钢铁堡垒', [
+  LevelMap('关卡 4 · 迷宫', [
+    'B B B B B B B',
+    'B S B B B S B',
+    'B B B W W B B',
+    'B B  W   W  B',
+    'B B W T T W B',
+    'B   W T T W  ',
+    'B B W T T W B',
+    'B   W T T W  ',
+    'B B W T T W B',
+    'B B  W   W  B',
+    'B B B W W B B',
+    'B S B B B S B',
+    'B B B B B B B',
+  ]),
+  // Boss 关(Tier 1):精英首领·铁卫。开阔场地便于机动缠斗。
+  LevelMap('关卡 5 · 铁卫据点', [
+    '             ',
+    '             ',
+    '  S       S  ',
+    '      B      ',
+    '   B  B  B   ',
+    '             ',
+    ' B         B ',
+    '             ',
+    '   B  B  B   ',
+    '      B      ',
+    '  S       S  ',
+    '             ',
+    '             ',
+  ]),
+  LevelMap('关卡 6 · 钢铁防线', [
+    '             ',
+    '             ',
+    ' B S     S B ',
+    '             ',
+    '  B  BBB  B  ',
+    '     B B     ',
+    ' S   B B   S ',
+    '     B B     ',
+    '  B  BBB  B  ',
+    '             ',
+    ' B S     S B ',
+    '             ',
+    '             ',
+  ]),
+  LevelMap('关卡 7 · 钢铁堡垒', [
     'S S S B S S S',
     'S B B B B B S',
     'S B W W W B S',
@@ -92,8 +123,23 @@ final List<LevelMap> kLevels = [
     ' B B B B B B ',
     '             ',
   ]),
-  // Boss 终关:开阔竞技场(顶部为 Boss 出生区,留出 6 格宽通道供其推进)
-  LevelMap('关卡 6 · 虎二降临', [
+  LevelMap('关卡 8 · 死亡走廊', [
+    'B B     B B  ',
+    'B S BBB S B  ',
+    'B   B B   B  ',
+    'BBB B B BBB  ',
+    '    B B      ',
+    'B B B B B B  ',
+    'B     S     B',
+    'B B B B B B  ',
+    '    B B      ',
+    'BBB B B BBB  ',
+    'B   B B   B  ',
+    'B S BBB S B  ',
+    'B B     B B  ',
+  ]),
+  // Boss 终关(Tier 2):虎王降临。开阔竞技场,顶部留出 6 格宽 Boss 出生区。
+  LevelMap('关卡 9 · 虎王降临', [
     '             ',
     '             ',
     '  B   S   B  ',
@@ -110,8 +156,21 @@ final List<LevelMap> kLevels = [
   ]),
 ];
 
-/// 该关卡是否为 Boss 终关。
-bool isBossLevel(int n) => n == kBossLevelIndex;
+/// 关卡对应的 Boss 分级(0=非 Boss 关,1/2=Tier)。
+/// Boss 关固定在第 5 / 9 关(0-based 索引 4 / 8)。
+int bossTierForLevel(int n) {
+  switch (n) {
+    case 4:
+      return 1;
+    case 8:
+      return 2;
+    default:
+      return 0;
+  }
+}
+
+/// 该关卡是否为 Boss 关。
+bool isBossLevel(int n) => bossTierForLevel(n) > 0;
 
 /// 把整砖地图解析为 26x26 半格地形
 List<List<Terrain>> parseTerrain(LevelMap map) {

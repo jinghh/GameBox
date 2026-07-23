@@ -17,17 +17,29 @@ import '../../../shared/net/tank_bluetooth.dart';
 import '../battle_city_game.dart';
 import 'wire.dart';
 
-class TankBtRoomPage extends StatefulWidget {
-  const TankBtRoomPage({super.key});
-
-  @override
-  State<TankBtRoomPage> createState() => _TankBtRoomPageState();
-}
-
 enum _Mode { menu, hosting, picking, connecting }
 
-class _TankBtRoomPageState extends State<TankBtRoomPage>
-    with GameDebugMixin<TankBtRoomPage> {
+/// 通用「经典蓝牙创建/加入房间」入口。各游戏(坦克 / 泡泡堂)通过 [onStart]
+/// 注入自己的对战页面即可复用同一套蓝牙连接流程。
+class BtRoomPage extends StatefulWidget {
+  final String title;
+  final String gameId; // 调试面板 id
+  final bool guestAutoStart; // guest 连上后是否自动开始(坦克=false 需点开始;泡泡堂=true)
+  final Widget Function(BtSppLink link, NetRole role, bool autoStart) onStart;
+  const BtRoomPage({
+    super.key,
+    required this.title,
+    required this.gameId,
+    this.guestAutoStart = true,
+    required this.onStart,
+  });
+
+  @override
+  State<BtRoomPage> createState() => _BtRoomPageState();
+}
+
+class _BtRoomPageState extends State<BtRoomPage>
+    with GameDebugMixin<BtRoomPage> {
   _Mode _mode = _Mode.menu;
   bool _busy = false;
   String? _hint;
@@ -110,18 +122,14 @@ class _TankBtRoomPageState extends State<TankBtRoomPage>
     final link = BtSppLink();
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
-        builder: (_) => BattleCityGame(
-          link: link,
-          role: role,
-          autoStart: autoStart,
-        ),
+        builder: (_) => widget.onStart(link, role, autoStart),
       ),
     );
   }
 
   // ---- 调试面板(GameDebug) ----
   @override
-  String get id => 'tank_online';
+  String get id => widget.gameId;
 
   @override
   int? get currentLevel => null; // 房间页无关卡
@@ -154,7 +162,7 @@ class _TankBtRoomPageState extends State<TankBtRoomPage>
       appBar: AppBar(
         backgroundColor: const Color(0xFF1C1C1C),
         foregroundColor: const Color(0xFFFFD54A),
-        title: const Text('坦克联机 · 蓝牙', style: TextStyle(fontSize: 16)),
+        title: Text(widget.title, style: const TextStyle(fontSize: 16)),
       ),
       body: SafeArea(
         child: _hint == null ? _body() : _hintBody(_hint!),
@@ -363,4 +371,16 @@ class _TankBtRoomPageState extends State<TankBtRoomPage>
       ),
     );
   }
+}
+
+/// 坦克大战 · 双人蓝牙(复用通用 BtRoomPage)。
+class TankBtRoomPage extends BtRoomPage {
+  TankBtRoomPage({super.key})
+      : super(
+          title: '坦克联机 · 蓝牙',
+          gameId: 'tank_online',
+          guestAutoStart: false,
+          onStart: (link, role, autoStart) =>
+              BattleCityGame(link: link, role: role, autoStart: autoStart),
+        );
 }

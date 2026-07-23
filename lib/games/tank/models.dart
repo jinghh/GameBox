@@ -24,14 +24,15 @@ class Tank {
   bool spawning = true; // 出生动画
   double spawnAnim = 0;
 
-  // ---- Boss 终关:虎二坦克及其分裂体 ----
-  double size; // 边长(世界单位):普通=kTank,Boss=3x
+  // ---- Boss:双首领 ----
+  double size; // 边长(世界单位):普通=kTank,Boss=kBossSize
   bool isBoss = false;
-  bool isMiniBoss = false;
-  int hp = 1; // Boss=50 / 小Boss=3(其它种类忽略)
-  double bombTimer = 0; // Boss 阶段3 扔炸弹倒计时
+  bool isMiniBoss = false; // 保留字段(旧分裂机制已移除,恒为 false)
+  int hp = 1; // Boss 当前血量(其它种类忽略)
+  int maxHp = 1; // Boss 总血量(用于血条比例显示)
+  double bombTimer = 0; // Boss 阶段3 投弹倒计时
+  double summonTimer = 0; // Boss 召唤僚机倒计时
   double hitFlashTime = 0; // 受击闪烁剩余时间(秒)
-  double miniBurstTimer = 0; // 小Boss 连发第二弹延迟(秒)
 
   Tank({
     required this.pos,

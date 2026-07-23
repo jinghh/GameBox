@@ -90,7 +90,7 @@ class _ByteReader {
 }
 
 // ============================ 实体序列化 ============================
-// Tank:不同步本地态(fireCooldown/aiTimer/aiDir/bombTimer/miniBurstTimer/
+// Tank:不同步本地态(fireCooldown/aiTimer/aiDir/bombTimer/summonTimer/
 //       spawnAnim/hitFlashTime)与 speed(guest 不跑逻辑,无需)。13 字节。
 
 void _writeTank(_ByteWriter w, Tank t) {
@@ -252,11 +252,12 @@ class Snapshot {
   final bool baseAlive;
   final bool freezeActive;
   final int bossHpShown;
-  final int miniRemaining;
+  final int bossMaxHp; // Boss 总血量(guest 计算血条比例用)
   final int enemyRemaining;
   final int gridSeq; // 地形版本:host 仅在 _bumpTerrain 时 +1;guest 据此判断是否需要重绘地形
   final double time;
-  final List<List<Terrain>> grid;
+  final List<List<Terrain>>? grid; // 可空:null = 引用上一帧地形(差量同步)
+  bool get hasGrid => grid != null;
   final List<Tank> players;
   final List<Tank> enemies;
   final List<Bullet> bullets;
@@ -272,7 +273,7 @@ class Snapshot {
     required this.baseAlive,
     required this.freezeActive,
     required this.bossHpShown,
-    required this.miniRemaining,
+    required this.bossMaxHp,
     required this.enemyRemaining,
     required this.gridSeq,
     required this.time,
@@ -297,11 +298,12 @@ class Snapshot {
     if (freezeActive) flags |= 1 << 2;
     w.u8(flags);
     w.u8(bossHpShown);
-    w.u8(miniRemaining);
+    w.u8(bossMaxHp);
     w.u8(enemyRemaining);
     w.u8(gridSeq);
     w.f32(time);
-    _writeGrid(w, grid);
+    w.u8(grid != null ? 1 : 0); // 含地形? 1=随包带 grid,0=引用上一帧(差量)
+    if (grid != null) _writeGrid(w, grid!);
     w.u8(players.length);
     for (final t in players) {
       _writeTank(w, t);
@@ -335,11 +337,12 @@ class Snapshot {
     final level = r.u8();
     final flags = r.u8();
     final bossHpShown = r.u8();
-    final miniRemaining = r.u8();
+    final bossMaxHp = r.u8();
     final enemyRemaining = r.u8();
     final gridSeq = r.u8();
     final time = r.f32();
-    final grid = _readGrid(r);
+    final includeGrid = r.u8() != 0;
+    final grid = includeGrid ? _readGrid(r) : null;
     final players = <Tank>[];
     for (int i = 0, n = r.u8(); i < n; i++) {
       players.add(_readTank(r));
@@ -369,7 +372,7 @@ class Snapshot {
       baseAlive: (flags & (1 << 1)) != 0,
       freezeActive: (flags & (1 << 2)) != 0,
       bossHpShown: bossHpShown,
-      miniRemaining: miniRemaining,
+      bossMaxHp: bossMaxHp,
       enemyRemaining: enemyRemaining,
       gridSeq: gridSeq,
       time: time,
