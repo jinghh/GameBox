@@ -1,5 +1,5 @@
 name: tank_app
-description: "GAMEBOX：纯单机离线小游戏合集（坦克大战 / 泡泡堂 / 2048 / 贪吃蛇 / 扫雷 / 俄罗斯方块 / 五子棋 / 吃豆人）。"
+description: "GAMEBOX：纯单机离线小游戏合集（坦克大战 / 泡泡堂 / 2048 / 贪吃蛇 / 扫雷 / 俄罗斯方块 / 五子棋 / 吃豆人 / 飞机大战）。"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev

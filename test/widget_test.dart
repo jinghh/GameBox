@@ -14,4 +14,10 @@ void main() {
   test('坦克大战仍在合集中', () {
     expect(kGames.any((g) => g.id == 'tank'), isTrue);
   });
+
+  test('飞机大战已注册且带最高分', () {
+    final plane = kGames.where((g) => g.id == 'plane').toList();
+    expect(plane, hasLength(1));
+    expect(plane.single.bestKey, 'best_plane');
+  });
 }

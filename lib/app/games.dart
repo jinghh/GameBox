@@ -6,6 +6,7 @@ import '../games/minesweeper/minesweeper_page.dart';
 import '../games/snake/snake_page.dart';
 import '../games/tetris/tetris_page.dart';
 import '../games/pacman/pacman_game.dart';
+import '../games/plane/plane_game.dart';
 import '../home/game_home_page.dart';
 
 /// 一个可插拔游戏的描述。
@@ -109,5 +110,14 @@ final List<GameSpec> kGames = [
     accent: const Color(0xFFFFE100),
     builder: (_) => const PacManPage(),
     bestKey: 'pacman_best',
+  ),
+  GameSpec(
+    id: 'plane',
+    title: '飞机大战',
+    subtitle: '空战射击 · 闯关打 Boss',
+    emoji: '✈️',
+    accent: const Color(0xFF4FC3F7),
+    builder: (_) => const PlanePage(),
+    bestKey: 'best_plane',
   ),
 ];
