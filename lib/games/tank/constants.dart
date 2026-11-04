@@ -106,82 +106,30 @@ const double kBulletSpeed = 130.0;
 const double kBulletSpeedFast = 175.0;
 
 // ---- 计时 ----
-const double kPlayerFireCooldown = 0.45;
+/// 玩家开火冷却：随火力等级缩短（对齐文档"射速/攻速随等级提升"）。
+double playerFireCooldown(int level) {
+  switch (level) {
+    case 0:
+      return 0.40;
+    case 1:
+      return 0.32;
+    case 2:
+      return 0.26;
+    default:
+      return 0.20;
+  }
+}
+
 const double kEnemyFireCooldown = 1.6;
 const double kPlayerShieldStart = 3.0;
 const double kPowerupLife = 12.0;
-const double kFreezeTime = 8.0;
-const double kShovelTime = 15.0;
+const double kFreezeTime = 10.0;
+const double kShovelTime = 20.0;
 const double kHelmetTime = 10.0;
 
 const int kMaxEnemiesOnField = 4;
 const int kEnemiesPerLevel = 20;
 const int kStartLives = 3;
-
-// ---- Boss 系统:双首领(关卡 5 / 9,难度递进) ----
-const double kBossSize = kTank * 1.5; // 24 世界单位(所有 Boss 统一尺寸,兼容网络编码)
-
-/// 单个 Boss 的分级配置(数据驱动,避免散落的魔法数字)。
-class BossTier {
-  final String name; // Boss 名称
-  final int hp; // 总血量(必须 <=255,受网络 u8 编码限制)
-  final double speed1; // 阶段1(常规)移速
-  final double speed2; // 阶段2(狂怒)移速
-  final double speed3; // 阶段3(绝地)移速
-  final double fireCd1; // 阶段1 开火冷却
-  final double fireCd2; // 阶段2 开火冷却(双发)
-  final double fireCd3; // 阶段3 开火冷却(三发)
-  final bool canBomb; // 阶段3 是否投掷炸弹
-  final bool canSummon; // 阶段2+ 是否召唤精英僚机
-  final int killBonus; // 击破奖励分
-
-  const BossTier({
-    required this.name,
-    required this.hp,
-    required this.speed1,
-    required this.speed2,
-    required this.speed3,
-    required this.fireCd1,
-    required this.fireCd2,
-    required this.fireCd3,
-    required this.canBomb,
-    required this.canSummon,
-    required this.killBonus,
-  });
-}
-
-/// 双首领:索引 0/1 → Tier 1/2,分别对应第 5 / 9 关。
-/// 血量、火力、移速逐级递进;高阶追加炸弹与僚机召唤机制。
-const List<BossTier> kBossTiers = [
-  BossTier(
-    name: '铁卫',
-    hp: 14,
-    speed1: 40, speed2: 46, speed3: 56,
-    fireCd1: 1.5, fireCd2: 1.05, fireCd3: 0.75,
-    canBomb: false, canSummon: false, killBonus: 2000,
-  ),
-  BossTier(
-    name: '虎王',
-    hp: 30,
-    speed1: 44, speed2: 54, speed3: 72,
-    fireCd1: 1.1, fireCd2: 0.78, fireCd3: 0.5,
-    canBomb: true, canSummon: true, killBonus: 6000,
-  ),
-];
-
-// 阶段血量分数阈值(按剩余血量比例划分,通用于各 Tier)
-const double kBossPhase2Frac = 0.6; // 剩余 <=60% → 狂怒
-const double kBossPhase3Frac = 0.3; // 剩余 <=30% → 绝地反击
-
-// 炸弹(阶段3,仅 Tier2)
-const double kBossBombInterval = 9; // 投弹间隔(秒)
-const double kBossBombSpeed = 55;
-const double kBossBombRadius = kTank * 1.7; // 炸弹爆炸伤害半径
-
-// 精英僚机召唤(狂怒起,仅 Tier2)
-const double kBossSummonInterval = 11; // 召唤间隔(秒)
-const int kBossSummonCount = 2; // 每次召唤数量
-const int kBossSummonMaxOnField = 3; // 场上僚机数量上限
 
 /// cell 坐标 -> 世界坐标（左上角）
 double cellToWorld(int c) => c * kCell;

@@ -17,9 +17,24 @@ import '../models.dart';
 /// guest = 玩家1(远端 P2),只发输入、收快照渲染。
 enum NetRole { offline, host, guest }
 
-/// 消息类型(每条消息首字节)。
-const int kMsgSnapshot = 1;
-const int kMsgInput = 2;
+/// 联机字节协议版本。任何字节布局变更(字段增删/顺序调整)都必须 +1。
+/// 版本编在消息首字节高 4 位：新旧版本首字节不同，旧端会直接丢弃新包、
+/// 新端能识别并提示，避免按错误布局静默解析出错乱状态。
+const int kWireVersion = 2;
+
+/// 消息类型(每条消息首字节 = 版本 << 4 | 类型)。
+const int kMsgSnapshot = (kWireVersion << 4) | 1;
+const int kMsgInput = (kWireVersion << 4) | 2;
+
+/// 是否为「本协议但版本不同」的数据包(旧版本首字节为 1 / 2)。
+/// 其它游戏或噪声包返回 false，由调用方按原有 switch 静默忽略。
+bool isWireVersionMismatch(Uint8List bytes) {
+  if (bytes.isEmpty) return false;
+  final head = bytes[0];
+  if (head == kMsgSnapshot || head == kMsgInput) return false;
+  final type = head & 0x0F;
+  return (type == 1 || type == 2) && (head >>> 4) != kWireVersion;
+}
 
 // ============================ 字节读写器 ============================
 
@@ -90,8 +105,8 @@ class _ByteReader {
 }
 
 // ============================ 实体序列化 ============================
-// Tank:不同步本地态(fireCooldown/aiTimer/aiDir/bombTimer/summonTimer/
-//       spawnAnim/hitFlashTime)与 speed(guest 不跑逻辑,无需)。13 字节。
+// Tank:不同步本地态(fireCooldown/aiTimer/aiDir/spawnAnim)与
+//       speed(guest 不跑逻辑,无需)。12 字节。
 
 void _writeTank(_ByteWriter w, Tank t) {
   w.i16((t.pos.dx * 16).round());
@@ -99,17 +114,13 @@ void _writeTank(_ByteWriter w, Tank t) {
   w.u8(t.dir.index);
   int flags = 0;
   if (t.isPlayer) flags |= 1 << 0;
-  if (t.isBoss) flags |= 1 << 1;
-  if (t.isMiniBoss) flags |= 1 << 2;
   if (t.alive) flags |= 1 << 3;
   if (t.bonus) flags |= 1 << 4;
   if (t.spawning) flags |= 1 << 5;
-  if (t.size >= kBossSize) flags |= 1 << 6; // 普通kTank / Boss kBossSize
   w.u8(flags);
   w.u8(t.kind?.index ?? 0);
   w.u8(t.player);
   w.u8(t.bulletLevel);
-  w.u8(t.hp);
   w.u8(t.armorHp);
   w.u16((t.shieldTime * 10).round().clamp(0, 65535)); // ×10 定点
 }
@@ -122,7 +133,6 @@ Tank _readTank(_ByteReader r) {
   final kindIdx = r.u8();
   final player = r.u8();
   final bulletLevel = r.u8();
-  final hp = r.u8();
   final armorHp = r.u8();
   final shieldQ = r.u16();
   final isPlayer = (flags & (1 << 0)) != 0;
@@ -136,13 +146,10 @@ Tank _readTank(_ByteReader r) {
     speed: 0, // guest 不跑逻辑
     bonus: (flags & (1 << 4)) != 0,
     player: player,
-    size: (flags & (1 << 6)) != 0 ? kBossSize : kTank,
+    size: kTank,
   )
     ..alive = (flags & (1 << 3)) != 0
-    ..isBoss = (flags & (1 << 1)) != 0
-    ..isMiniBoss = (flags & (1 << 2)) != 0
     ..bulletLevel = bulletLevel
-    ..hp = hp
     ..armorHp = armorHp
     ..shieldTime = shieldQ / 10.0
     ..spawning = (flags & (1 << 5)) != 0;
@@ -156,7 +163,6 @@ void _writeBullet(_ByteWriter w, Bullet b) {
   w.u8(b.dir.index);
   int flags = 0;
   if (b.fromPlayer) flags |= 1 << 0;
-  if (b.isBomb) flags |= 1 << 1;
   if (b.owner != null) flags |= 1 << 2;
   w.u8(flags);
   w.u8(b.owner ?? 0);
@@ -177,7 +183,6 @@ Bullet _readBullet(_ByteReader r) {
     speed: 0, // guest 不跑逻辑
     power: power,
     owner: (flags & (1 << 2)) != 0 ? owner : null,
-    isBomb: (flags & (1 << 1)) != 0,
   );
 }
 
@@ -248,11 +253,8 @@ class Snapshot {
   final int score;
   final int lives;
   final int level;
-  final bool isBossLevel;
   final bool baseAlive;
   final bool freezeActive;
-  final int bossHpShown;
-  final int bossMaxHp; // Boss 总血量(guest 计算血条比例用)
   final int enemyRemaining;
   final int gridSeq; // 地形版本:host 仅在 _bumpTerrain 时 +1;guest 据此判断是否需要重绘地形
   final double time;
@@ -269,11 +271,8 @@ class Snapshot {
     required this.score,
     required this.lives,
     required this.level,
-    required this.isBossLevel,
     required this.baseAlive,
     required this.freezeActive,
-    required this.bossHpShown,
-    required this.bossMaxHp,
     required this.enemyRemaining,
     required this.gridSeq,
     required this.time,
@@ -293,12 +292,9 @@ class Snapshot {
     w.u8(lives);
     w.u8(level);
     int flags = 0;
-    if (isBossLevel) flags |= 1 << 0;
     if (baseAlive) flags |= 1 << 1;
     if (freezeActive) flags |= 1 << 2;
     w.u8(flags);
-    w.u8(bossHpShown);
-    w.u8(bossMaxHp);
     w.u8(enemyRemaining);
     w.u8(gridSeq);
     w.f32(time);
@@ -336,8 +332,6 @@ class Snapshot {
     final lives = r.u8();
     final level = r.u8();
     final flags = r.u8();
-    final bossHpShown = r.u8();
-    final bossMaxHp = r.u8();
     final enemyRemaining = r.u8();
     final gridSeq = r.u8();
     final time = r.f32();
@@ -368,11 +362,8 @@ class Snapshot {
       score: score,
       lives: lives,
       level: level,
-      isBossLevel: (flags & (1 << 0)) != 0,
       baseAlive: (flags & (1 << 1)) != 0,
       freezeActive: (flags & (1 << 2)) != 0,
-      bossHpShown: bossHpShown,
-      bossMaxHp: bossMaxHp,
       enemyRemaining: enemyRemaining,
       gridSeq: gridSeq,
       time: time,

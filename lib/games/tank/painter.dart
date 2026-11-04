@@ -82,7 +82,6 @@ Color _playerBodyColor(int p) =>
 
 Color _tankBodyColor(Tank t, bool flash) {
   if (flash) return const Color(0xFFFF3B3B);
-  if (t.isMiniBoss) return const Color(0xFFFF7043); // 小Boss:橙红
   if (t.isPlayer) return _playerBodyColor(t.player);
   switch (t.kind) {
     case EnemyKind.basic:
@@ -197,11 +196,7 @@ class EntitiesPainter extends CustomPainter {
 
     // 敌方坦克 / 子弹 / 爆炸
     for (final e in scene.enemies) {
-      if (e.isBoss) {
-        _drawBoss(canvas, e, time, freezeActive);
-      } else {
-        _drawTank(canvas, e, time, freezeActive);
-      }
+      _drawTank(canvas, e, time, freezeActive);
     }
     for (final b in scene.bullets) {
       _drawBullet(canvas, b);
@@ -375,77 +370,9 @@ void _drawSpawnStar(Canvas c, Offset center, double anim) {
 }
 
 void _drawBullet(Canvas c, Bullet b) {
-  if (b.isBomb) {
-    final ctr = b.center;
-    c.drawCircle(ctr, kBullet, Paint()..color = const Color(0xFFFF6E40));
-    c.drawCircle(ctr, kBullet * 0.5, Paint()..color = const Color(0xFFFFE082));
-    return;
-  }
   final r = b.rect;
   c.drawRect(r, _pBulletCore);
   c.drawRect(r.deflate(1), b.fromPlayer ? _pBulletP : _pBulletE);
-}
-
-// ---- Boss:虎二坦克(3 倍体积 / 双炮筒 / 血条)----
-void _drawBoss(Canvas c, Tank t, double time, bool freezeActive) {
-  if (!t.alive) return;
-  final center = t.center;
-  if (t.spawning) {
-    _drawSpawnStar(c, center, t.spawnAnim);
-    return;
-  }
-  final s = t.size / kTank; // 缩放倍数(Boss)
-  final lowHp = t.maxHp > 0 && t.hp / t.maxHp <= kBossPhase3Frac;
-  final flash = t.hitFlashTime > 0 || (lowHp && (time * 6).floor() % 2 == 0);
-  final body = flash ? const Color(0xFFFFE0B2) : const Color(0xFFC62828);
-  _pBody.color = body;
-  _pTurret.color = Color.lerp(body, const Color(0xFF000000), 0.3)!;
-
-  c.save();
-  c.translate(center.dx, center.dy);
-  c.rotate(t.dir.radians);
-  c.scale(s);
-  // 履带
-  c.drawRect(Rect.fromLTWH(-8, -7, 3, 14), _pTrack);
-  c.drawRect(Rect.fromLTWH(5, -7, 3, 14), _pTrack);
-  for (double i = -6; i <= 5; i += 3) {
-    c.drawRect(Rect.fromLTWH(-8, i, 3, 1.4), _pTrackHi);
-    c.drawRect(Rect.fromLTWH(5, i, 3, 1.4), _pTrackHi);
-  }
-  // 车身 + 描边
-  c.drawRect(Rect.fromLTWH(-5, -5, 10, 10), _pBody);
-  c.drawRect(Rect.fromLTWH(-5, -5, 10, 10), _pOutline);
-  // 虎纹(深色横纹)
-  final stripe = Paint()..color = const Color(0xFF7E1414);
-  c.drawRect(Rect.fromLTWH(-5, -3, 10, 1.3), stripe);
-  c.drawRect(Rect.fromLTWH(-5, 0.2, 10, 1.3), stripe);
-  c.drawRect(Rect.fromLTWH(-5, 3.4, 10, 1.3), stripe);
-  // 双炮筒(前方左右各一根)
-  c.drawRect(Rect.fromLTWH(-3.4, -8.6, 1.7, 5.2), _pTurret);
-  c.drawRect(Rect.fromLTWH(1.7, -8.6, 1.7, 5.2), _pTurret);
-  // 炮塔
-  c.drawCircle(Offset.zero, 3.5, _pTurret);
-  c.drawRect(Rect.fromLTWH(-1.7, -1, 3.4, 2), _pHatch);
-  c.restore();
-
-  _drawBossHpBar(c, t);
-
-  if (freezeActive) {
-    c.drawCircle(center, t.size * 0.55, _pFreeze);
-  }
-}
-
-void _drawBossHpBar(Canvas c, Tank t) {
-  final w = t.size;
-  final x = t.pos.dx;
-  final y = t.pos.dy - 7;
-  c.drawRect(
-      Rect.fromLTWH(x - 1, y - 1, w + 2, 5), Paint()..color = const Color(0xDD000000));
-  final frac = (t.maxHp > 0 ? t.hp / t.maxHp : 0.0).clamp(0.0, 1.0);
-  final col = frac > 0.66
-      ? const Color(0xFF66BB6A)
-      : (frac > 0.33 ? const Color(0xFFFFC107) : const Color(0xFFEF5350));
-  c.drawRect(Rect.fromLTWH(x, y, w * frac, 3), Paint()..color = col);
 }
 
 void _drawExplosion(Canvas c, Explosion ex) {

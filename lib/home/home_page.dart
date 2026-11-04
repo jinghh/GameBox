@@ -87,7 +87,7 @@ class _Header extends StatelessWidget {
                   runSpacing: 8,
                   children: [
                     _Pill(label: '🎮 ${kGames.length} 款游戏'),
-                    const _Pill(label: '📴 纯单机离线'),
+                    const _Pill(label: '📶 含蓝牙联机'),
                   ],
                 ),
               ],

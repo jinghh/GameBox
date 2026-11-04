@@ -24,15 +24,7 @@ class Tank {
   bool spawning = true; // 出生动画
   double spawnAnim = 0;
 
-  // ---- Boss:双首领 ----
-  double size; // 边长(世界单位):普通=kTank,Boss=kBossSize
-  bool isBoss = false;
-  bool isMiniBoss = false; // 保留字段(旧分裂机制已移除,恒为 false)
-  int hp = 1; // Boss 当前血量(其它种类忽略)
-  int maxHp = 1; // Boss 总血量(用于血条比例显示)
-  double bombTimer = 0; // Boss 阶段3 投弹倒计时
-  double summonTimer = 0; // Boss 召唤僚机倒计时
-  double hitFlashTime = 0; // 受击闪烁剩余时间(秒)
+  double size; // 边长(世界单位):普通坦克 = kTank
 
   Tank({
     required this.pos,
@@ -45,6 +37,7 @@ class Tank {
     this.size = kTank,
   }) : aiDir = dir {
     if (kind == EnemyKind.armor) armorHp = 4;
+    if (kind == EnemyKind.power) armorHp = 2; // 绿色强化坦克：2 血（对齐文档）
     if (isPlayer) shieldTime = kPlayerShieldStart;
   }
 
@@ -60,7 +53,6 @@ class Bullet {
   double speed;
   bool dead = false;
   final int power; // >=3 可破钢
-  bool isBomb = false; // Boss 炸弹:落地范围爆炸
 
   Bullet({
     required this.pos,
@@ -69,7 +61,6 @@ class Bullet {
     required this.speed,
     this.power = 0,
     this.owner,
-    this.isBomb = false,
   });
 
   Rect get rect => Rect.fromLTWH(pos.dx, pos.dy, kBullet, kBullet);

@@ -77,8 +77,8 @@ final List<LevelMap> kLevels = [
     'B S B B B S B',
     'B B B B B B B',
   ]),
-  // Boss 关(Tier 1):精英首领·铁卫。开阔场地便于机动缠斗。
-  LevelMap('关卡 5 · 铁卫据点', [
+  // 关卡 5:开阔场地,便于机动缠斗。
+  LevelMap('关卡 5 · 演练场', [
     '             ',
     '             ',
     '  S       S  ',
@@ -138,8 +138,8 @@ final List<LevelMap> kLevels = [
     'B S BBB S B  ',
     'B B     B B  ',
   ]),
-  // Boss 终关(Tier 2):虎王降临。开阔竞技场,顶部留出 6 格宽 Boss 出生区。
-  LevelMap('关卡 9 · 虎王降临', [
+  // 关卡 9:最终关,开阔竞技场。
+  LevelMap('关卡 9 · 终章', [
     '             ',
     '             ',
     '  B   S   B  ',
@@ -154,23 +154,8 @@ final List<LevelMap> kLevels = [
     '  B   S   B  ',
     '             ',
   ]),
+  ..._generatedLevels(),
 ];
-
-/// 关卡对应的 Boss 分级(0=非 Boss 关,1/2=Tier)。
-/// Boss 关固定在第 5 / 9 关(0-based 索引 4 / 8)。
-int bossTierForLevel(int n) {
-  switch (n) {
-    case 4:
-      return 1;
-    case 8:
-      return 2;
-    default:
-      return 0;
-  }
-}
-
-/// 该关卡是否为 Boss 关。
-bool isBossLevel(int n) => bossTierForLevel(n) > 0;
 
 /// 把整砖地图解析为 26x26 半格地形
 List<List<Terrain>> parseTerrain(LevelMap map) {
@@ -215,33 +200,147 @@ Terrain _charToTerrain(String ch) {
   }
 }
 
-/// 根据关卡生成 20 个敌人的种类队列（难度随关卡递增）
-List<EnemyKind> enemyQueueForLevel(int level, Random rng) {
-  final basic = max(4, 14 - level * 2);
-  final fast = level >= 2 ? 3 + level : 2;
-  final power = level >= 2 ? 2 + (level ~/ 2) : 1;
-  final armor = level >= 3 ? 2 + (level - 2) : 1;
+/// 某关的敌人配额（总数恒为 kEnemiesPerLevel）。
+class _EnemyMix {
+  final int basic;
+  final int fast;
+  final int power;
+  final int armor;
+  const _EnemyMix(this.basic, this.fast, this.power, this.armor);
+  int get advanced => fast + power + armor;
+}
 
+/// 敌人配额：难度随关卡平滑递增（1-5 教学仅普通；6 关起每关 +1 高级敌人，
+/// 并逐步引入快速/强化/重型，硬敌优先保留名额）。level 为 1-based。
+_EnemyMix _enemyMixForLevel(int level) {
+  if (level <= 5) {
+    return const _EnemyMix(kEnemiesPerLevel, 0, 0, 0);
+  }
+  // 高级敌人总数：每关 +1，6 关起从 4 开始，封顶 16（保留至少 4 个普通坦克）。
+  final advTotal = (4 + (level - 6)).clamp(4, 16);
+  // 三类各自随关卡非减增长（封顶 8），硬敌(装甲 > 强化 > 快速)优先保留名额。
+  var armor = (level >= 8 ? level - 7 : 0).clamp(0, 8);
+  var power = (level >= 7 ? level - 6 : 0).clamp(0, 8);
+  var fast = (level >= 6 ? 3 + (level - 6) : 0).clamp(0, 8);
+  int sum = armor + power + fast;
+  if (sum > advTotal) {
+    // 先削减快速坦克，保住强化/装甲
+    fast = (advTotal - armor - power).clamp(0, fast);
+    if (armor + power > advTotal) {
+      power = (advTotal - armor).clamp(0, power);
+      if (power < 0) {
+        power = 0;
+        armor = advTotal;
+      }
+    }
+  }
+  // 保底：始终保留少量快速坦克（绕后威胁基地），从强化/装甲名额中借。
+  if (fast < 2 && armor + power > 0) {
+    final need = 2 - fast;
+    final fromPower = need.clamp(0, power);
+    power -= fromPower;
+    final fromArmor = (need - fromPower).clamp(0, armor);
+    armor -= fromArmor;
+    fast += fromPower + fromArmor;
+  }
+  final basic = kEnemiesPerLevel - (armor + power + fast).clamp(0, kEnemiesPerLevel);
+  return _EnemyMix(basic, fast, power, armor);
+}
+
+/// 根据关卡生成 20 个敌人的种类队列（难度随关卡递增）。
+List<EnemyKind> enemyQueueForLevel(int level, Random rng) {
+  final m = _enemyMixForLevel(level);
   final list = <EnemyKind>[];
   void add(EnemyKind k, int n) {
     for (int i = 0; i < n; i++) {
       list.add(k);
     }
   }
-
-  add(EnemyKind.basic, basic);
-  add(EnemyKind.fast, fast);
-  add(EnemyKind.power, power);
-  add(EnemyKind.armor, armor);
-  // 补足 / 截断到固定数量
-  while (list.length < kEnemiesPerLevel) {
-    list.add(EnemyKind.basic);
-  }
-  if (list.length > kEnemiesPerLevel) {
-    list.removeRange(kEnemiesPerLevel, list.length);
-  }
+  add(EnemyKind.basic, m.basic);
+  add(EnemyKind.fast, m.fast);
+  add(EnemyKind.power, m.power);
+  add(EnemyKind.armor, m.armor);
   list.shuffle(rng);
   return list;
+}
+
+/// 难度阶段标签（与 enemyQueueForLevel 同源，level 为 1-based）。
+String levelStageLabel(int level) {
+  final m = _enemyMixForLevel(level);
+  if (m.advanced == 0) return '教学 · 仅普通坦克';
+  final parts = <String>[];
+  if (m.fast > 0) parts.add('快速');
+  if (m.power > 0) parts.add('强化');
+  if (m.armor > 0) parts.add('重型');
+  return '含${parts.join('/')}坦克 ($m.advanced/$kEnemiesPerLevel)';
+}
+
+/// 程序化生成关卡 10-20 的地图（确定性：固定种子 → 每次构建一致）。
+/// 保证 13x13、出生点与基地区通畅、保留十字主通道确保连通。
+List<LevelMap> _generatedLevels() {
+  final out = <LevelMap>[];
+  for (int lv = 10; lv <= 20; lv++) {
+    final tiles = <String>[];
+    bool safe(int r, int c) {
+      if (r <= 1) return true; // 顶部三出生点行
+      if (r == 2 && (c <= 1 || c >= 11 || c == 6 || c == 7)) return true; // 出生列下方留空
+      // 三条纵向出生通道（左/中/右）直达第 6 行横向主通道
+      if (r >= 3 && r <= 5 && (c <= 1 || c == 6 || c >= 11)) return true;
+      if (r == 12) return true; // 基地区（逻辑覆盖 + 加砖）
+      if (r == 11 && c >= 4 && c <= 9) return true; // 基地保护 + 玩家双出生点
+      return false;
+    }
+
+    for (int r = 0; r < kTileCount; r++) {
+      final sb = StringBuffer();
+      for (int c = 0; c < kTileCount; c++) {
+        if (safe(r, c) || r == 6 || c == 6) {
+          sb.write(' '); // 安全区 / 十字主通道留空
+          continue;
+        }
+        // 左右镜像对称：用对称基列决定内容，保证对称且确定
+        final cc = c <= 6 ? c : 12 - c;
+        final rnd = Random(r * 73856093 ^ cc * 19349663 ^ lv * 83492791);
+        final v = rnd.nextDouble();
+        final pSteel = 0.10 + (lv - 10) * 0.02; // 钢墙随关卡增多
+        final pWater = 0.05 + (lv - 10) * 0.01;
+        final pIce = lv >= 13 ? 0.05 + (lv - 13) * 0.02 : 0.0; // 冰面 13 关起出现
+        final pTree = 0.08;
+        if (v < pSteel) {
+          sb.write('S');
+        } else if (v < pSteel + pWater) {
+          sb.write('W');
+        } else if (v < pSteel + pWater + pIce) {
+          sb.write('I');
+        } else if (v < pSteel + pWater + pIce + pTree) {
+          sb.write('T');
+        } else {
+          sb.write('B');
+        }
+      }
+      tiles.add(sb.toString());
+    }
+    out.add(LevelMap('关卡 $lv · ${_genName(lv)}', tiles));
+  }
+  return out;
+}
+
+/// 关卡 10-20 的主题名
+String _genName(int lv) {
+  const names = {
+    10: '钢魄',
+    11: '湍流',
+    12: '密林',
+    13: '寒霜',
+    14: '砖狱',
+    15: '铁壁',
+    16: '冰河',
+    17: '重围',
+    18: '回廊',
+    19: '绝地',
+    20: '终焉',
+  };
+  return names[lv] ?? '战场';
 }
 
 /// 标记队列中哪几个是"闪烁奖励坦克"（击毁后掉落道具）

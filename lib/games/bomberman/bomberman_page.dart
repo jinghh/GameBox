@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 
 import '../../debug/game_debug_registry.dart';
 import '../../shared/best_score_store.dart';
+import '../../shared/orientation.dart';
 import '../../shared/bgm_synth.dart';
 import '../../shared/game_shell.dart';
 import '../../shared/net/p2p_link.dart';
@@ -200,8 +201,8 @@ class _BomberPageState extends State<BomberPage>
     _bgm = ChiptuneBgm(theme: BgmTheme.bounce);
     _bgm.init();
     if (_isCoop) {
-      // 双人闯关锁定竖屏
-      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      // 双人闯关锁定竖屏（原生 channel，MIUI 上 SystemChrome 会被忽略）
+      OrientationChannel.set(AppOrientation.portrait);
     }
     if (_isNet) _setupNet();
     if (widget.autoStart) _start();
@@ -216,7 +217,8 @@ class _BomberPageState extends State<BomberPage>
     _snd.dispose();
     _bgm.dispose();
     widget.link?.close();
-    if (_isCoop) SystemChrome.setPreferredOrientations([]);
+    // 恢复 App 默认竖屏（勿用 sensor：横拿手机会让主页/其他页跟着横屏）。
+    if (_isCoop) OrientationChannel.set(AppOrientation.portrait);
     super.dispose();
   }
 

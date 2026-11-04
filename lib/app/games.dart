@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
 
-import '../games/bomberman/bomberman_page.dart';
-import '../games/bomberman/net/bomber_bt_room_page.dart';
 import '../games/game2048/game2048_page.dart';
 import '../games/gomoku/gomoku_page.dart';
 import '../games/minesweeper/minesweeper_page.dart';
 import '../games/snake/snake_page.dart';
-import '../games/tank/battle_city_game.dart';
-import '../games/tank/net/bt_room_page.dart';
 import '../games/tetris/tetris_page.dart';
+import '../games/pacman/pacman_game.dart';
+import '../home/game_home_page.dart';
 
 /// 一个可插拔游戏的描述。
 ///
@@ -37,22 +35,16 @@ class GameSpec {
 }
 
 /// 合集游戏注册表——主页列表由此驱动。
+/// 坦克/泡泡堂等「含多模式」的游戏在此各占一张卡片,点进去进入 [GameHomePage]
+/// 选择 单人/双人/联机;其余游戏直接指向各自页面。
 final List<GameSpec> kGames = [
   GameSpec(
     id: 'tank',
     title: '坦克大战',
-    subtitle: 'Battle City',
+    subtitle: 'Battle City · 守基地',
     emoji: '🛡️',
     accent: const Color(0xFFFFD54A),
-    builder: (_) => const BattleCityGame(),
-  ),
-  GameSpec(
-    id: 'tank_online',
-    title: '坦克联机',
-    subtitle: '蓝牙·双人闯关',
-    emoji: '📶',
-    accent: const Color(0xFF4CAF50),
-    builder: (_) => TankBtRoomPage(),
+    builder: (_) => const GameHomePage(type: GameType.tank),
   ),
   GameSpec(
     id: 'bomber',
@@ -60,24 +52,8 @@ final List<GameSpec> kGames = [
     subtitle: '放雷炸敌,过关递增',
     emoji: '💣',
     accent: const Color(0xFFFF8A4C),
-    builder: (_) => const BomberPage(),
+    builder: (_) => const GameHomePage(type: GameType.bomber),
     bestKey: 'best_bomber',
-  ),
-  GameSpec(
-    id: 'bomber_coop',
-    title: '泡泡堂双人',
-    subtitle: '同屏·双人闯关',
-    emoji: '👾',
-    accent: const Color(0xFF66BB6A),
-    builder: (_) => const BomberPage(coop: true),
-  ),
-  GameSpec(
-    id: 'bomber_online',
-    title: '泡泡堂联机',
-    subtitle: '蓝牙·双人 1v1',
-    emoji: '📶',
-    accent: const Color(0xFFEF5350),
-    builder: (_) => BomberBtRoomPage(),
   ),
   GameSpec(
     id: 'g2048',
@@ -124,5 +100,14 @@ final List<GameSpec> kGames = [
     accent: const Color(0xFFE0B040),
     builder: (_) => const GomokuPage(),
     bestKey: 'best_gomoku',
+  ),
+  GameSpec(
+    id: 'pacman',
+    title: '吃豆人',
+    subtitle: 'Pac-Man · 经典街机复刻',
+    emoji: '👻',
+    accent: const Color(0xFFFFE100),
+    builder: (_) => const PacManPage(),
+    bestKey: 'pacman_best',
   ),
 ];

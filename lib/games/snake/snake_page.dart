@@ -8,6 +8,8 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../shared/orientation.dart';
+
 import '../../debug/game_debug_registry.dart';
 import '../../shared/best_score_store.dart';
 import '../../shared/swipe_detector.dart';
@@ -43,10 +45,7 @@ class _SnakePageState extends State<SnakePage>
   @override
   void initState() {
     super.initState();
-    SystemChrome.setPreferredOrientations(<DeviceOrientation>[
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
+    OrientationChannel.set(AppOrientation.landscape);
     _best = BestScoreStore.get(_bestKey);
     _reset();
   }
@@ -56,9 +55,7 @@ class _SnakePageState extends State<SnakePage>
     _timer?.cancel();
     _clock?.cancel();
     _levelTimer?.cancel();
-    SystemChrome.setPreferredOrientations(<DeviceOrientation>[
-      DeviceOrientation.portraitUp,
-    ]);
+    OrientationChannel.set(AppOrientation.portrait);
     super.dispose();
   }
 
