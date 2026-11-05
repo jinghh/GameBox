@@ -51,3 +51,13 @@ const double kPlayerSpeed = 265.0;
 const double kPowerFallSpeed = 82.0;
 const int kMaxParticles = 360;
 const int kBossEveryWaves = 4;
+
+// ---- 精灵图视觉尺寸（世界坐标，机身大小，含尾焰） ----
+// anchor = 机身中心在精灵高度上的相对位置：玩家机头朝上约 0.35，敌机/Boss 朝下约 0.65。
+const double kPlayerSpriteH = 62;
+const double kPlayerSpriteAnchor = 0.35;
+const double kScoutSpriteH = 38;
+const double kZigzagSpriteH = 42;
+const double kHeavySpriteH = 48;
+const double kBossSpriteH = 112;
+const double kEnemySpriteAnchor = 0.65;

@@ -22,6 +22,7 @@ import 'plane_constants.dart';
 import 'plane_entities.dart';
 import 'plane_painter.dart';
 import 'plane_sound.dart';
+import 'plane_sprites.dart';
 
 class PlanePage extends StatefulWidget {
   const PlanePage({super.key});
@@ -37,6 +38,7 @@ class _PlanePageState extends State<PlanePage>
   final PlaneScene _scene = PlaneScene();
   late final PlanePainter _painter;
   late final PlaneSound _sound;
+  PlaneSprites? _sprites;
 
   final ValueNotifier<int> _frame = ValueNotifier<int>(0);
   final ValueNotifier<PlaneHud> _hud = ValueNotifier<PlaneHud>(
@@ -73,6 +75,7 @@ class _PlanePageState extends State<PlanePage>
     _best = BestScoreStore.get(_bestKey);
     _syncHud();
     _sound.init();
+    unawaited(_loadSprites());
     // 强制竖屏（沿用项目 MethodChannel 方案，避开部分 ROM 忽略 SystemChrome）
     OrientationChannel.set(AppOrientation.portrait);
     unawaited(_setWakelock(true));
@@ -88,6 +91,8 @@ class _PlanePageState extends State<PlanePage>
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_setWakelock(false));
     OrientationChannel.set(AppOrientation.portrait);
+    _sprites?.dispose();
+    _sprites = null;
     _sound.dispose();
     _painter.disposeIcons();
     _frame.dispose();
@@ -121,6 +126,19 @@ class _PlanePageState extends State<PlanePage>
     } on Object {
       // 平台不支持时忽略，不影响游戏
     }
+  }
+
+  /// 精灵图异步解码；完成前 painter 用几何绘制兜底。
+  /// 页面在加载途中被销毁时直接释放已解码的图片，避免纹理泄漏。
+  Future<void> _loadSprites() async {
+    final sprites = await PlaneSprites.load();
+    if (!mounted) {
+      sprites.dispose();
+      return;
+    }
+    _sprites = sprites;
+    _painter.sprites = sprites;
+    _frame.value++; // 立即重绘为精灵版本
   }
 
   // ---- 帧循环 ----

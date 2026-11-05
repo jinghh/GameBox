@@ -9,11 +9,15 @@ import 'package:flutter/material.dart';
 
 import 'plane_constants.dart';
 import 'plane_entities.dart';
+import 'plane_sprites.dart';
 
 class PlanePainter extends CustomPainter {
   PlanePainter(this.scene, {required Listenable repaint}) : super(repaint: repaint);
 
   final PlaneScene scene;
+
+  /// 素材加载完成后由页面赋值；为空时退回几何绘制。
+  PlaneSprites? sprites;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -116,42 +120,101 @@ class PlanePainter extends CustomPainter {
   // ---- 敌机 ----
   void _drawEnemies(Canvas canvas) {
     for (final e in scene.enemies) {
-      canvas.save();
-      canvas.translate(e.x, e.y);
-      final Path path = switch (e.kind) {
-        EnemyKind.scout => _scoutPath,
-        EnemyKind.zigzag => _zigzagPath,
-        EnemyKind.heavy => _heavyPath,
-        EnemyKind.boss => _bossPath,
-      };
-      final Color color = switch (e.kind) {
-        EnemyKind.scout => const Color(0xFFEF5350),
-        EnemyKind.zigzag => const Color(0xFFBA68C8),
-        EnemyKind.heavy => const Color(0xFFFF8A3D),
-        EnemyKind.boss => const Color(0xFF8C7AE6),
-      };
-      canvas.drawPath(path, _enemyFill..color = color);
-      canvas.drawPath(path, _enemyStroke..color = color.withValues(alpha: 0.85));
-      if (e.kind != EnemyKind.boss) {
-        canvas.drawCircle(const Offset(0, -2), 3.2, _enemyCockpit);
-        // 受击闪白
-        if (e.hp < e.maxHp) {
-          canvas.drawPath(
-            path,
-            _enemyHurt
-              ..color = Colors.white.withValues(
-                alpha: 0.15 + 0.15 * math.sin(scene.time * 20),
-              ),
-          );
-        }
+      final sprite =
+          sprites?.pick(_spriteId(e.kind), scene.time, _spriteFps(e.kind));
+      if (sprite != null) {
+        _drawSprite(
+          canvas,
+          sprite,
+          e.x,
+          e.y,
+          _spriteHeight(e.kind),
+          kEnemySpriteAnchor,
+          paint: e.hp < e.maxHp ? _spriteHurtPaint : _spritePaint,
+        );
       } else {
-        canvas.drawCircle(const Offset(0, -12), 10, _enemyCockpit);
-        canvas.drawCircle(const Offset(-38, 12), 6, _enemyCockpit);
-        canvas.drawCircle(const Offset(38, 12), 6, _enemyCockpit);
+        _drawEnemyGeometry(canvas, e);
       }
-      canvas.restore();
       if (e.kind == EnemyKind.boss) _drawBossBar(canvas, e);
     }
+  }
+
+  static String _spriteId(EnemyKind kind) => switch (kind) {
+        EnemyKind.scout => 'scout',
+        EnemyKind.zigzag => 'zigzag',
+        EnemyKind.heavy => 'heavy',
+        EnemyKind.boss => 'boss',
+      };
+
+  static double _spriteFps(EnemyKind kind) => switch (kind) {
+        EnemyKind.scout => 10,
+        EnemyKind.zigzag => 12,
+        EnemyKind.heavy => 10,
+        EnemyKind.boss => 5,
+      };
+
+  static double _spriteHeight(EnemyKind kind) => switch (kind) {
+        EnemyKind.scout => kScoutSpriteH,
+        EnemyKind.zigzag => kZigzagSpriteH,
+        EnemyKind.heavy => kHeavySpriteH,
+        EnemyKind.boss => kBossSpriteH,
+      };
+
+  /// 以 [anchor] 处对准实体中心绘制精灵，火焰长短变化不会让机身漂移。
+  void _drawSprite(
+    Canvas canvas,
+    SpriteFrame sprite,
+    double cx,
+    double cy,
+    double height,
+    double anchor, {
+    Paint? paint,
+  }) {
+    final w = height * sprite.aspect;
+    final dst = Rect.fromLTWH(cx - w / 2, cy - height * anchor, w, height);
+    canvas.drawImageRect(
+      sprite.image,
+      sprite.src,
+      dst,
+      paint ?? _spritePaint,
+    );
+  }
+
+  /// 素材未加载完成时的几何兜底绘制（也用于加载失败场景）。
+  void _drawEnemyGeometry(Canvas canvas, Enemy e) {
+    canvas.save();
+    canvas.translate(e.x, e.y);
+    final Path path = switch (e.kind) {
+      EnemyKind.scout => _scoutPath,
+      EnemyKind.zigzag => _zigzagPath,
+      EnemyKind.heavy => _heavyPath,
+      EnemyKind.boss => _bossPath,
+    };
+    final Color color = switch (e.kind) {
+      EnemyKind.scout => const Color(0xFFEF5350),
+      EnemyKind.zigzag => const Color(0xFFBA68C8),
+      EnemyKind.heavy => const Color(0xFFFF8A3D),
+      EnemyKind.boss => const Color(0xFF8C7AE6),
+    };
+    canvas.drawPath(path, _enemyFill..color = color);
+    canvas.drawPath(path, _enemyStroke..color = color.withValues(alpha: 0.85));
+    if (e.kind != EnemyKind.boss) {
+      canvas.drawCircle(const Offset(0, -2), 3.2, _enemyCockpit);
+      if (e.hp < e.maxHp) {
+        canvas.drawPath(
+          path,
+          _enemyHurt
+            ..color = Colors.white.withValues(
+              alpha: 0.15 + 0.15 * math.sin(scene.time * 20),
+            ),
+        );
+      }
+    } else {
+      canvas.drawCircle(const Offset(0, -12), 10, _enemyCockpit);
+      canvas.drawCircle(const Offset(-38, 12), 6, _enemyCockpit);
+      canvas.drawCircle(const Offset(38, 12), 6, _enemyCockpit);
+    }
+    canvas.restore();
   }
 
   void _drawBossBar(Canvas canvas, Enemy boss) {
@@ -182,6 +245,26 @@ class PlanePainter extends CustomPainter {
     // 无敌期闪烁（用非整除频率避免与帧率同频）
     if (p.invuln > 0 && (scene.time * 11).floor().isEven) return;
 
+    final sprite = sprites?.pick('player', scene.time, 12);
+    if (sprite != null) {
+      _drawSprite(canvas, sprite, p.x, p.y, kPlayerSpriteH,
+          kPlayerSpriteAnchor);
+    } else {
+      _drawPlayerGeometry(canvas, p);
+    }
+
+    if (p.shield > 0) {
+      final pulse = 0.5 + 0.5 * math.sin(scene.time * 8);
+      canvas.drawCircle(
+        Offset(p.x, p.y),
+        23 + pulse * 2,
+        _shieldPaint
+          ..color = const Color(0xFF4FC3F7).withValues(alpha: 0.35 + pulse * 0.3),
+      );
+    }
+  }
+
+  void _drawPlayerGeometry(Canvas canvas, PlayerPlane p) {
     canvas.save();
     canvas.translate(p.x, p.y);
     final flame = 8 + 4 * math.sin(scene.time * 30);
@@ -193,15 +276,6 @@ class PlanePainter extends CustomPainter {
     canvas.drawPath(_playerBody, _playerStroke);
     canvas.drawOval(const Rect.fromLTWH(-3.5, -11, 7, 12), _cockpitPaint);
     canvas.drawRect(const Rect.fromLTWH(-1, 8, 2, 8), _stripePaint);
-    if (p.shield > 0) {
-      final pulse = 0.5 + 0.5 * math.sin(scene.time * 8);
-      canvas.drawCircle(
-        Offset.zero,
-        23 + pulse * 2,
-        _shieldPaint
-          ..color = const Color(0xFF4FC3F7).withValues(alpha: 0.35 + pulse * 0.3),
-      );
-    }
     canvas.restore();
   }
 
@@ -327,6 +401,16 @@ class PlanePainter extends CustomPainter {
     ..strokeWidth = 1.5;
   static final Paint _particlePaint = Paint();
   static final Paint _flashPaint = Paint();
+
+  // 精灵绘制：medium 缩放质量在移动端足够，成本远低于 high。
+  static final Paint _spritePaint = Paint()
+    ..filterQuality = FilterQuality.medium;
+  static final Paint _spriteHurtPaint = Paint()
+    ..filterQuality = FilterQuality.medium
+    ..colorFilter = const ColorFilter.mode(
+      Color(0x66FFFFFF),
+      BlendMode.srcATop,
+    );
 
   // ---- 复用 Path（原点在实体中心，绘制时 translate）----
   static final Path _playerBody = Path()
