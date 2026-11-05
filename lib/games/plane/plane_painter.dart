@@ -21,13 +21,16 @@ class PlanePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    // 背景在实际像素坐标系铺满整个游戏区，不受 360x640 世界画布等比缩放影响，
+    // 因此屏幕两侧不会出现黑边。
+    _drawScreenBackground(canvas, size);
+
     final tr = planeTransform(size);
     if (tr.scale <= 0) return;
     canvas.save();
     canvas.translate(tr.origin.dx, tr.origin.dy);
     canvas.scale(tr.scale);
 
-    _drawBackground(canvas);
     _drawStars(canvas);
     _drawPowerUps(canvas);
     _drawBullets(canvas);
@@ -59,50 +62,26 @@ class PlanePainter extends CustomPainter {
   }
 
   // ---- 背景 ----
-  void _drawBackground(Canvas canvas) {
+  /// cover：等比放大到铺满实际画布后居中裁剪，消除左右黑边且不变形。
+  void _drawScreenBackground(Canvas canvas, Size size) {
     final bg = sprites?.background;
     if (bg == null) {
-      _drawFallbackBackground(canvas);
+      canvas.drawRect(Offset.zero & size, _fallbackBgPaint);
       return;
     }
-    // 单张铺满：双图首尾相接会在接合处出现明显横线（原图不是无缝平铺素材）。
-    // 流动感由前景滚动的星星提供，背景不做滚动。
+    final srcW = bg.image.width.toDouble();
+    final srcH = bg.image.height.toDouble();
+    final scale = math.max(size.width / srcW, size.height / srcH);
+    final w = srcW * scale;
+    final h = srcH * scale;
     canvas.drawImageRect(
       bg.image,
       bg.src,
-      const Rect.fromLTWH(0, 0, kPlaneW, kPlaneH),
+      Rect.fromLTWH((size.width - w) / 2, (size.height - h) / 2, w, h),
       _bgImagePaint,
     );
     // 轻微压暗：星云较亮，保证子弹与飞机轮廓仍清晰
-    canvas.drawRect(
-      const Rect.fromLTWH(0, 0, kPlaneW, kPlaneH),
-      _bgDimPaint,
-    );
-  }
-
-  /// 背景图加载失败时退回原来的渐变 + 星云 + 网格背景。
-  void _drawFallbackBackground(Canvas canvas) {
-    canvas.drawRect(
-      const Rect.fromLTWH(0, 0, kPlaneW, kPlaneH),
-      _bgPaint,
-    );
-    final drift = (scene.time * 12) % (kPlaneH + 260);
-    for (var i = 0; i < 3; i++) {
-      final y = -130.0 + i * 260 + drift;
-      if (y < -100 || y > kPlaneH + 100) continue;
-      canvas.drawOval(
-        Rect.fromCenter(
-          center: Offset(kPlaneW * (0.2 + 0.3 * i), y),
-          width: 280,
-          height: 96,
-        ),
-        _nebulaPaint,
-      );
-    }
-    final offset = (scene.time * 26) % 64;
-    for (var y = -64 + offset; y < kPlaneH; y += 64) {
-      canvas.drawLine(Offset(0, y), Offset(kPlaneW, y), _gridPaint);
-    }
+    canvas.drawRect(Offset.zero & size, _bgDimPaint);
   }
 
   void _drawStars(Canvas canvas) {
@@ -362,28 +341,10 @@ class PlanePainter extends CustomPainter {
   }
 
   // ---- 复用 Paint ----
-  static final Paint _bgPaint = Paint()
-    ..shader = const LinearGradient(
-      begin: Alignment.topCenter,
-      end: Alignment.bottomCenter,
-      colors: <Color>[
-        Color(0xFF030816),
-        Color(0xFF0A1734),
-        Color(0xFF123054),
-      ],
-    ).createShader(const Rect.fromLTWH(0, 0, kPlaneW, kPlaneH));
-
+  static final Paint _fallbackBgPaint = Paint()..color = const Color(0xFF0A1734);
   static final Paint _bgImagePaint = Paint()
     ..filterQuality = FilterQuality.medium;
   static final Paint _bgDimPaint = Paint()..color = const Color(0x33081420);
-
-  // 不用 MaskFilter.blur：大半径模糊椭圆每帧走 GPU 光栅化，
-  // 在低端机上会明显掉帧；纯半透明椭圆已足够表现星云。
-  static final Paint _nebulaPaint = Paint()..color = const Color(0x144FC3F7);
-
-  static final Paint _gridPaint = Paint()
-    ..color = const Color(0x104FC3F7)
-    ..strokeWidth = 1;
 
   static final List<Paint> _starPaints = <Paint>[
     for (var i = 0; i < 4; i++)

@@ -385,7 +385,7 @@ class _PlanePageState extends State<PlanePage>
       kind: EnemyKind.boss,
       x: kPlaneW / 2,
       y: -70,
-      vx: 72,
+      vx: 0,
       vy: 0,
       w: 112,
       h: 62,
@@ -415,15 +415,9 @@ class _PlanePageState extends State<PlanePage>
         e.flashCooldown = math.max(0.0, e.flashCooldown - dt);
       }
       if (e.kind == EnemyKind.boss) {
+        // Boss 固定居中：左右移动会让宽机翼靠近画布边界，看起来像被切掉
         if (e.y < 105) e.y += 62 * dt; // 入场后停在上半屏
-        e.x += e.vx * dt;
-        if (e.x < kBossMoveMargin) {
-          e.x = kBossMoveMargin;
-          e.vx = e.vx.abs();
-        } else if (e.x > kPlaneW - kBossMoveMargin) {
-          e.x = kPlaneW - kBossMoveMargin;
-          e.vx = -e.vx.abs();
-        }
+        e.x = kPlaneW / 2;
       } else if (e.kind == EnemyKind.zigzag) {
         e.y += e.vy * dt;
         e.x = (e.baseX + math.sin(e.t * 2.4 + e.phase) * 62)
@@ -863,39 +857,45 @@ class _PlanePageState extends State<PlanePage>
           autofocus: true,
           focusNode: _focus,
           onKeyEvent: _onKeyEvent,
-          child: Column(
-            children: [
-              _buildHud(),
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (_, cons) {
-                    final size = Size(cons.maxWidth, cons.maxHeight);
-                    return Stack(
-                      children: [
-                        RepaintBoundary(
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onPanDown: (d) {
-                              // 顶部/底部按钮可能抢走键盘焦点，点回画布时取回
-                              if (!_focus.hasFocus) _focus.requestFocus();
-                              _onPointer(d.localPosition, size);
-                            },
-                            onPanUpdate: (d) =>
-                                _onPointer(d.localPosition, size),
-                            child: CustomPaint(
-                              painter: _painter,
-                              size: size,
-                            ),
-                          ),
-                        ),
-                        _buildOverlay(),
-                      ],
-                    );
-                  },
-                ),
-              ),
-              _buildControls(),
-            ],
+          // 画布铺满整个 body（背景才能真正覆盖屏幕），HUD / 控制栏叠在画布上层，
+          // 避免 Column 布局下画布绘制溢出盖住分数文字。
+          child: LayoutBuilder(
+            builder: (_, cons) {
+              final size = Size(cons.maxWidth, cons.maxHeight);
+              return Stack(
+                children: [
+                  RepaintBoundary(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onPanDown: (d) {
+                        // 顶部/底部按钮可能抢走键盘焦点，点回画布时取回
+                        if (!_focus.hasFocus) _focus.requestFocus();
+                        _onPointer(d.localPosition, size);
+                      },
+                      onPanUpdate: (d) =>
+                          _onPointer(d.localPosition, size),
+                      child: CustomPaint(
+                        painter: _painter,
+                        size: size,
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    child: _buildHud(),
+                  ),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: _buildControls(),
+                  ),
+                  _buildOverlay(),
+                ],
+              );
+            },
           ),
         ),
       ),
@@ -904,7 +904,9 @@ class _PlanePageState extends State<PlanePage>
 
   Widget _buildHud() => ValueListenableBuilder<PlaneHud>(
         valueListenable: _hud,
-        builder: (_, h, _) => Padding(
+        builder: (_, h, _) => Container(
+          // 星云背景铺满后文字需要一层暗底保证可读性
+          color: const Color(0x660A1020),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -934,7 +936,8 @@ class _PlanePageState extends State<PlanePage>
 
   Widget _buildControls() => ValueListenableBuilder<PlaneHud>(
         valueListenable: _hud,
-        builder: (_, h, _) => Padding(
+        builder: (_, h, _) => Container(
+          color: const Color(0x660A1020),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           child: Row(
             children: [

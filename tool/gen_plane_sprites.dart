@@ -72,11 +72,12 @@ const List<GroupSpec> _groups = [
     FrameSpec(file: 'plane-1.jpg', x: 1508, y: 1039, w: 448, h: 477, rotate: 180),
     FrameSpec(file: 'plane-1.jpg', x: 2063, y: 1014, w: 448, h: 502, rotate: 180),
   ]),
-  // 图 2 STYLE A：重装机械 Boss（两帧）。
-  // 机翼横向跨度到 x≈68 / x≈2685，框必须留足两边，否则翼尖会被切平。
+  // 图 2 STYLE A：重装机械 Boss（两帧并排）。
+  // 两架机翼几乎占满整幅，按画布中线一分为二才不会切掉翼尖；
+  // 中线正好落在两架之间的空隙里。y 只取上半幅，避开 STYLE B。
   GroupSpec(id: 'boss', maxSide: 512, frames: [
-    FrameSpec(file: 'plane-2.jpg', x: 40, y: 60, w: 1220, h: 820, rotate: 180),
-    FrameSpec(file: 'plane-2.jpg', x: 1560, y: 60, w: 1192, h: 820, rotate: 180),
+    FrameSpec(file: 'plane-2.jpg', x: 0, y: 55, w: 1376, h: 830, rotate: 180),
+    FrameSpec(file: 'plane-2.jpg', x: 1376, y: 55, w: 1376, h: 830, rotate: 180),
   ]),
   // 图 3 STYLE A：高科技流线型玩家机（机头已朝上，两帧）
   GroupSpec(id: 'player', maxSide: 288, frames: [
@@ -315,9 +316,11 @@ void _keepMainComponents(img.Image im) {
   if (areas.isEmpty) return;
 
   final maxArea = areas.reduce(max);
+  // 阈值放宽到 5%：机翼末端的导弹/挂架可能只通过细线与机身相连，
+  // 按 15% 过滤会把它们当成杂点删掉，造成机翼残缺。
   final keep = <int>{
     for (var i = 0; i < areas.length; i++)
-      if (areas[i] >= maxArea * 0.15) i,
+      if (areas[i] >= maxArea * 0.05) i,
   };
   for (var i = 0; i < w * h; i++) {
     final id = label[i];
