@@ -60,6 +60,28 @@ class PlanePainter extends CustomPainter {
 
   // ---- 背景 ----
   void _drawBackground(Canvas canvas) {
+    final bg = sprites?.background;
+    if (bg == null) {
+      _drawFallbackBackground(canvas);
+      return;
+    }
+    // 单张铺满：双图首尾相接会在接合处出现明显横线（原图不是无缝平铺素材）。
+    // 流动感由前景滚动的星星提供，背景不做滚动。
+    canvas.drawImageRect(
+      bg.image,
+      bg.src,
+      const Rect.fromLTWH(0, 0, kPlaneW, kPlaneH),
+      _bgImagePaint,
+    );
+    // 轻微压暗：星云较亮，保证子弹与飞机轮廓仍清晰
+    canvas.drawRect(
+      const Rect.fromLTWH(0, 0, kPlaneW, kPlaneH),
+      _bgDimPaint,
+    );
+  }
+
+  /// 背景图加载失败时退回原来的渐变 + 星云 + 网格背景。
+  void _drawFallbackBackground(Canvas canvas) {
     canvas.drawRect(
       const Rect.fromLTWH(0, 0, kPlaneW, kPlaneH),
       _bgPaint,
@@ -130,7 +152,7 @@ class PlanePainter extends CustomPainter {
           e.y,
           _spriteHeight(e.kind),
           kEnemySpriteAnchor,
-          paint: e.hp < e.maxHp ? _spriteHurtPaint : _spritePaint,
+          paint: e.hitFlash > 0 ? _spriteHurtPaint : _spritePaint,
         );
       } else {
         _drawEnemyGeometry(canvas, e);
@@ -200,13 +222,10 @@ class PlanePainter extends CustomPainter {
     canvas.drawPath(path, _enemyStroke..color = color.withValues(alpha: 0.85));
     if (e.kind != EnemyKind.boss) {
       canvas.drawCircle(const Offset(0, -2), 3.2, _enemyCockpit);
-      if (e.hp < e.maxHp) {
+      if (e.hitFlash > 0) {
         canvas.drawPath(
           path,
-          _enemyHurt
-            ..color = Colors.white.withValues(
-              alpha: 0.15 + 0.15 * math.sin(scene.time * 20),
-            ),
+          _enemyHurt..color = Colors.white.withValues(alpha: 0.45),
         );
       }
     } else {
@@ -353,6 +372,10 @@ class PlanePainter extends CustomPainter {
         Color(0xFF123054),
       ],
     ).createShader(const Rect.fromLTWH(0, 0, kPlaneW, kPlaneH));
+
+  static final Paint _bgImagePaint = Paint()
+    ..filterQuality = FilterQuality.medium;
+  static final Paint _bgDimPaint = Paint()..color = const Color(0x33081420);
 
   // 不用 MaskFilter.blur：大半径模糊椭圆每帧走 GPU 光栅化，
   // 在低端机上会明显掉帧；纯半透明椭圆已足够表现星云。

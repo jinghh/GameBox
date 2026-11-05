@@ -30,6 +30,9 @@ class PlaneSprites {
 
   final Map<String, List<SpriteFrame>> _frames;
 
+  /// 星云背景，独立于机型帧；加载失败时 painter 回退渐变背景。
+  SpriteFrame? background;
+
   static const Map<String, List<String>> _manifest = {
     'player': [
       'assets/image/plane/player_1.png',
@@ -55,7 +58,7 @@ class PlaneSprites {
     ],
   };
 
-  bool get isEmpty => _frames.isEmpty;
+  bool get isEmpty => _frames.isEmpty && background == null;
 
   /// 逐帧加载；单帧失败只跳过该帧，painter 会退回几何绘制。
   static Future<PlaneSprites> load() async {
@@ -80,7 +83,22 @@ class PlaneSprites {
       }
       if (list.isNotEmpty) map[entry.key] = list;
     }
-    return PlaneSprites._(map);
+    final sprites = PlaneSprites._(map);
+    try {
+      final data = await rootBundle.load('assets/image/plane/bg.jpg');
+      final codec = await ui.instantiateImageCodec(
+        data.buffer.asUint8List(),
+      );
+      try {
+        final frame = await codec.getNextFrame();
+        sprites.background = SpriteFrame(frame.image);
+      } finally {
+        codec.dispose();
+      }
+    } on Object {
+      // 背景缺失时 painter 使用渐变兜底，不影响游戏
+    }
+    return sprites;
   }
 
   /// 按时间取动画帧：火焰状态循环播放。
@@ -98,5 +116,7 @@ class PlaneSprites {
       }
     }
     _frames.clear();
+    background?.image.dispose();
+    background = null;
   }
 }

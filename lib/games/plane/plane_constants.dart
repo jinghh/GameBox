@@ -59,5 +59,13 @@ const double kPlayerSpriteAnchor = 0.35;
 const double kScoutSpriteH = 38;
 const double kZigzagSpriteH = 42;
 const double kHeavySpriteH = 48;
-const double kBossSpriteH = 112;
+const double kBossSpriteH = 104;
 const double kEnemySpriteAnchor = 0.65;
+
+// Boss 精灵比碰撞体宽，横向移动边界按视觉半宽收紧，保证整架飞机始终在画布内。
+const double kBossMoveMargin = 96;
+
+// 中弹闪白：持续时长 + 再触发冷却。自动开火会连续命中，
+// 没有冷却的话高血量敌机会一直处于闪白状态。
+const double kHitFlashDuration = 0.12;
+const double kHitFlashCooldown = 0.40;

@@ -14,6 +14,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../../debug/game_debug_registry.dart';
 import '../../shared/best_score_store.dart';
 import '../../shared/game_shell.dart';
 import '../../shared/orientation.dart';
@@ -32,7 +33,8 @@ class PlanePage extends StatefulWidget {
 }
 
 class _PlanePageState extends State<PlanePage>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver,
+        GameDebugMixin<PlanePage> {
   static const String _bestKey = 'best_plane';
 
   final PlaneScene _scene = PlaneScene();
@@ -110,7 +112,11 @@ class _PlanePageState extends State<PlanePage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) return;
+    // inactive 多由输入法/系统浮层触发（dev 调试面板输入时会短暂进入），不算切后台。
+    if (state == AppLifecycleState.resumed ||
+        state == AppLifecycleState.inactive) {
+      return;
+    }
     _keys.clear();
     // 切后台/来电时自动暂停：停帧期间累计的弹幕不会在回来瞬间「秒杀」玩家。
     if (_phase.value == PlanePhase.playing) _togglePause();
@@ -139,6 +145,44 @@ class _PlanePageState extends State<PlanePage>
     _sprites = sprites;
     _painter.sprites = sprites;
     _frame.value++; // 立即重绘为精灵版本
+  }
+
+  // ---- dev 调试面板：仅开发包注册，可直接跳波次验证重装机 / Boss ----
+  @override
+  String get id => 'plane';
+
+  @override
+  Map<String, String> info() => {
+        '波次': '$_wave',
+        '分数': '$_score',
+        '敌机': '${_scene.enemies.length}',
+        '火力': 'Lv.${_scene.player.power}',
+        'Boss': _bossActive ? '在场' : '无',
+      };
+
+  @override
+  int? get currentLevel => _wave;
+
+  @override
+  int? get maxLevel => null; // 无尽模式
+
+  @override
+  void jumpToLevel(int n) {
+    final wave = n.clamp(1, 99).toInt();
+    _scene.enemies.clear();
+    _scene.enemyBullets.clear();
+    _scene.bullets.clear();
+    _wave = wave;
+    _spawned = 0;
+    _quota = planeWaveQuota(wave);
+    _spawnCd = 0.6;
+    _bossActive = false;
+    if (wave % kBossEveryWaves == 0) _spawnBoss();
+    if (_phase.value == PlanePhase.ready ||
+        _phase.value == PlanePhase.gameOver) {
+      _phase.value = PlanePhase.playing;
+    }
+    _syncHud();
   }
 
   // ---- 帧循环 ----
@@ -364,14 +408,20 @@ class _PlanePageState extends State<PlanePage>
     final p = _scene.player;
     for (final e in _scene.enemies) {
       e.t += dt;
+      if (e.hitFlash > 0) {
+        e.hitFlash = math.max(0.0, e.hitFlash - dt);
+      }
+      if (e.flashCooldown > 0) {
+        e.flashCooldown = math.max(0.0, e.flashCooldown - dt);
+      }
       if (e.kind == EnemyKind.boss) {
         if (e.y < 105) e.y += 62 * dt; // 入场后停在上半屏
         e.x += e.vx * dt;
-        if (e.x < 76) {
-          e.x = 76;
+        if (e.x < kBossMoveMargin) {
+          e.x = kBossMoveMargin;
           e.vx = e.vx.abs();
-        } else if (e.x > kPlaneW - 76) {
-          e.x = kPlaneW - 76;
+        } else if (e.x > kPlaneW - kBossMoveMargin) {
+          e.x = kPlaneW - kBossMoveMargin;
           e.vx = -e.vx.abs();
         }
       } else if (e.kind == EnemyKind.zigzag) {
@@ -475,6 +525,10 @@ class _PlanePageState extends State<PlanePage>
         if (e.dead || !b.rect.overlaps(e.rect)) continue;
         b.dead = true;
         e.hp -= b.damage;
+        if (e.flashCooldown <= 0) {
+          e.hitFlash = kHitFlashDuration;
+          e.flashCooldown = kHitFlashCooldown;
+        }
         _spark(b.x, b.y);
         _sound.hit();
         if (e.hp <= 0) _killEnemy(e);
@@ -707,6 +761,7 @@ class _PlanePageState extends State<PlanePage>
       if (e.hp <= 0) {
         _killEnemy(e);
       } else {
+        e.hitFlash = kHitFlashDuration;
         _explode(e.x, e.y, big: false);
       }
     }

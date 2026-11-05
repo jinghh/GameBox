@@ -71,7 +71,7 @@ release 构建使用 Android debug 签名。CI 与本地各自生成 debug keyst
 | 状态 / 路由 | 原生 `StatefulWidget` + `ValueNotifier`，Navigator 1.0；无 Provider / Riverpod / go_router |
 | 渲染 | `CustomPaint` 手绘 + `RepaintBoundary` 分层；`shouldRepaint => false`，由 `ValueNotifier` 逐帧驱动重绘，不逐帧 `setState` 整页 |
 | 主循环 | `Ticker`（对齐 vsync，坦克 / 飞机）或 `Timer.periodic`（吃豆人等） |
-| 资源 | 音效由代码合成；飞机大战使用设计稿裁切的精灵图（`assets/image/plane/`，火焰 2~3 帧循环），其余游戏仍为纯手绘；BGM 由 `bgm_synth.dart` 实时合成 |
+| 资源 | 音效由代码合成；飞机大战使用设计稿裁切的精灵图（`assets/image/plane/`，火焰 2~3 帧循环）与星云背景 `bg.jpg`，其余游戏仍为纯手绘；BGM 由 `bgm_synth.dart` 实时合成 |
 | 持久化 | `shared_preferences`，成绩与静音设置仅存本机 |
 | 平台 | Android 完整可用；`web/` / `windows/` 仍是 Flutter 模板，未适配蓝牙与方向通道 |
 
@@ -88,7 +88,7 @@ lib/
   shared/                音效池、BGM、成绩、摇杆、滑动、外壳、方向、联机
   debug/                 FPS 浮层、跳关面板、调试注册接口
 assets/sounds/           代码合成的短音效 wav
-assets/image/plane/      飞机大战精灵图（设计稿裁切生成，火焰多帧）
+assets/image/plane/      飞机大战精灵图 + 压缩后的星云背景
 tool/                    构建与素材生成脚本
 test/                    注册表冒烟、联机协议、吃豆人引擎
 .github/workflows/       APK 自动构建发布
@@ -125,7 +125,7 @@ flutter build apk --flavor dev --release --dart-define=MODE=dev
 | `build_prod.bat` | 构建 prod release，并打印产物与 adb 安装命令 |
 | `build_dev.bat` | 构建 dev release（已带 `--dart-define=MODE=dev`） |
 | `gen_sounds.dart` | `dart run tool/gen_sounds.dart` 重新合成 `assets/sounds/*.wav` |
-| `gen_plane_sprites.dart` | `dart run tool/gen_plane_sprites.dart` 从 `assets/image/*.jpg` 设计稿裁切、去棋盘格背景、按机头对齐并导出 `assets/image/plane/*.png`；加 `--preview` 输出拼图预览 |
+| `gen_plane_sprites.dart` | `dart run tool/gen_plane_sprites.dart` 从设计稿裁切、去棋盘格背景、按机头对齐导出 `assets/image/plane/*.png`，并把 `plane-bg.jpg` 压成 `bg.jpg`；加 `--preview` 输出拼图预览 |
 | `gen_dev_icon.dart` | 生成 dev 版红色角标启动图标 |
 | `sync_web_icons.dart` | 以 Android 主图标为源同步 `web/icons/` |
 
@@ -135,7 +135,7 @@ flutter build apk --flavor dev --release --dart-define=MODE=dev
 
 `--dart-define=MODE=dev` 注入后 `kIsDev` 为编译期 true；prod 包不传该参数，dev-only 分支会被 tree-shake。dev 包名 `com.jhh.tank_app.dev`、应用名 `GAMEBOX Dev`、红色角标图标，可与 prod 版共存安装。
 
-dev 包会挂载可拖动的调试浮层：实时显示 FPS，点击展开面板可查看当前游戏信息与关卡，并给已接入 `GameDebugMixin` 的游戏提供跳关能力（无尽关卡类游戏为调整关卡，纯分数类游戏隐藏跳关区）。
+dev 包会挂载可拖动的调试浮层：实时显示 FPS，点击展开面板可查看当前游戏信息与关卡，并给已接入 `GameDebugMixin` 的游戏提供跳关能力（无尽关卡类游戏为调整关卡，纯分数类游戏隐藏跳关区）。飞机大战已接入，输入波次即可跳到第 4 / 8 波直接查看重装型与 Boss。
 
 ## 自动发布
 

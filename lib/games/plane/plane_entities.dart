@@ -77,6 +77,8 @@ class Enemy {
   final int maxHp, score;
   double t = 0;
   double fireCd;
+  double hitFlash = 0; // 中弹闪白剩余时间，>0 时才用高亮画笔
+  double flashCooldown = 0; // 闪白再触发冷却，防止连发子弹把敌机刷成常白
   bool dead = false;
 
   Rect get rect => Rect.fromCenter(center: Offset(x, y), width: w, height: h);

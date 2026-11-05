@@ -11,6 +11,7 @@ void main() {
     final sprites = await PlaneSprites.load();
     try {
       expect(sprites.isEmpty, isFalse);
+      expect(sprites.background, isNotNull, reason: '缺少星云背景');
       for (final id in ['player', 'scout', 'zigzag', 'heavy', 'boss']) {
         expect(sprites.pick(id, 0, 1), isNotNull, reason: '缺少 $id 的动画帧');
       }

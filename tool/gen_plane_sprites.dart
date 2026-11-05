@@ -72,10 +72,11 @@ const List<GroupSpec> _groups = [
     FrameSpec(file: 'plane-1.jpg', x: 1508, y: 1039, w: 448, h: 477, rotate: 180),
     FrameSpec(file: 'plane-1.jpg', x: 2063, y: 1014, w: 448, h: 502, rotate: 180),
   ]),
-  // 图 2 STYLE A：重装机械 Boss（两帧，整图两行相邻，手工给框）
+  // 图 2 STYLE A：重装机械 Boss（两帧）。
+  // 机翼横向跨度到 x≈68 / x≈2685，框必须留足两边，否则翼尖会被切平。
   GroupSpec(id: 'boss', maxSide: 512, frames: [
-    FrameSpec(file: 'plane-2.jpg', x: 100, y: 75, w: 1080, h: 780, rotate: 180),
-    FrameSpec(file: 'plane-2.jpg', x: 1600, y: 75, w: 1080, h: 780, rotate: 180),
+    FrameSpec(file: 'plane-2.jpg', x: 40, y: 60, w: 1220, h: 820, rotate: 180),
+    FrameSpec(file: 'plane-2.jpg', x: 1560, y: 60, w: 1192, h: 820, rotate: 180),
   ]),
   // 图 3 STYLE A：高科技流线型玩家机（机头已朝上，两帧）
   GroupSpec(id: 'player', maxSide: 288, frames: [
@@ -92,7 +93,14 @@ void main(List<String> args) {
           .decodeJpg(File('$_srcDir/$file').readAsBytesSync())!
           .convert(numChannels: 4);
       _removeBackground(im);
-      final bands = _detectBands(im, horizontal: true, gap: 25, minSize: 60);
+      // 图 2 上下两行 Boss 之间几乎相连，限定上半部分才能分出 STYLE A 的两帧
+      final bands = _detectBands(
+        im,
+        horizontal: true,
+        gap: 25,
+        minSize: 60,
+        to: file == 'plane-2.jpg' ? 860 : null,
+      );
       stdout.writeln('== $file');
       for (var r = 0; r < bands.length; r++) {
         final band = bands[r];
@@ -192,9 +200,32 @@ void main(List<String> args) {
     previewFrames[group.id] = outFrames;
   }
 
+  _writeBackground();
+
   if (preview) {
     _writePreview(previewFrames);
   }
+}
+
+/// 星云背景：等比缩到 720 宽（约 2x 屏幕密度），JPEG 质量 85。
+/// 原图 1440x2912 / 2.4MB 直接打包太浪费；运行时仍按世界画布铺满绘制。
+void _writeBackground() {
+  const src = '$_srcDir/plane-bg.jpg';
+  const out = '$_outDir/bg.jpg';
+  final file = File(src);
+  if (!file.existsSync()) {
+    stdout.writeln('skip background: $src not found');
+    return;
+  }
+  final original = img.decodeJpg(file.readAsBytesSync())!;
+  final resized = img.copyResize(
+    original,
+    width: 720,
+    interpolation: img.Interpolation.cubic,
+  );
+  final bytes = img.encodeJpg(resized, quality: 85);
+  File(out).writeAsBytesSync(bytes);
+  stdout.writeln('$out  ${resized.width}x${resized.height}  bytes=${bytes.length}');
 }
 
 /// 从四边泛洪去掉棋盘格背景。只处理与画布边缘连通的灰白像素，
@@ -339,7 +370,9 @@ List<_Band> _detectBands(
 }) {
   if (horizontal) {
     final counts = List<int>.filled(im.height, 0);
-    for (var y = 0; y < im.height; y++) {
+    final y0 = from ?? 0;
+    final y1 = to ?? im.height;
+    for (var y = y0; y < y1; y++) {
       var n = 0;
       for (var x = 0; x < im.width; x += 2) {
         if (im.getPixel(x, y).a > 8) n++;
