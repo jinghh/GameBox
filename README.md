@@ -52,6 +52,8 @@ release 构建使用 Android debug 签名。CI 与本地各自生成 debug keyst
 | 吃豆人 | 迷宫吃豆、幽灵 scatter / chase 交替、能量豆反吃幽灵、经典樱桃 | 虚拟摇杆 + 方向键 / WASD | 单人 | 最高分 |
 | 飞机大战 | 竖版弹幕射击：自动开火、3 类敌机、每 4 波 Boss、火力 / 护盾 / 炸弹 / 生命道具 | 拖拽移动 / WASD / 方向键；空格 / B 放炸弹；P / Esc 暂停 | 单人 | 最高分 |
 
+爆炸按机型分两档：侦察机 / 摆动型只放前 4 帧短爆（0.28s），重装机播放完整 15 帧序列，Boss 额外在两侧机翼错峰生成小爆点，玩家掉命也是完整序列。
+
 ## 蓝牙联机
 
 只有坦克大战和泡泡堂支持，从首页卡片进入「联机版」：
@@ -71,7 +73,7 @@ release 构建使用 Android debug 签名。CI 与本地各自生成 debug keyst
 | 状态 / 路由 | 原生 `StatefulWidget` + `ValueNotifier`，Navigator 1.0；无 Provider / Riverpod / go_router |
 | 渲染 | `CustomPaint` 手绘 + `RepaintBoundary` 分层；`shouldRepaint => false`，由 `ValueNotifier` 逐帧驱动重绘，不逐帧 `setState` 整页 |
 | 主循环 | `Ticker`（对齐 vsync，坦克 / 飞机）或 `Timer.periodic`（吃豆人等） |
-| 资源 | 音效由代码合成；飞机大战使用设计稿裁切的精灵图（`assets/image/plane/`，火焰 2~3 帧循环）与星云背景 `bg.jpg`，其余游戏仍为纯手绘；BGM 由 `bgm_synth.dart` 实时合成 |
+| 资源 | 音效由代码合成；飞机大战使用设计稿裁切的精灵图（火焰 2~3 帧循环）、15 帧爆炸序列与星云背景 `bg.jpg`，其余游戏仍为纯手绘；BGM 由 `bgm_synth.dart` 实时合成 |
 | 持久化 | `shared_preferences`，成绩与静音设置仅存本机 |
 | 平台 | Android 完整可用；`web/` / `windows/` 仍是 Flutter 模板，未适配蓝牙与方向通道 |
 
@@ -88,7 +90,7 @@ lib/
   shared/                音效池、BGM、成绩、摇杆、滑动、外壳、方向、联机
   debug/                 FPS 浮层、跳关面板、调试注册接口
 assets/sounds/           代码合成的短音效 wav
-assets/image/plane/      飞机大战精灵图 + 压缩后的星云背景
+assets/image/plane/      飞机精灵图、15 帧爆炸序列、压缩后的星云背景
 tool/                    构建与素材生成脚本
 test/                    注册表冒烟、联机协议、吃豆人引擎
 .github/workflows/       APK 自动构建发布
@@ -125,7 +127,7 @@ flutter build apk --flavor dev --release --dart-define=MODE=dev
 | `build_prod.bat` | 构建 prod release，并打印产物与 adb 安装命令 |
 | `build_dev.bat` | 构建 dev release（已带 `--dart-define=MODE=dev`） |
 | `gen_sounds.dart` | `dart run tool/gen_sounds.dart` 重新合成 `assets/sounds/*.wav` |
-| `gen_plane_sprites.dart` | `dart run tool/gen_plane_sprites.dart` 从设计稿裁切、去棋盘格背景、按机头对齐导出 `assets/image/plane/*.png`，并把 `plane-bg.jpg` 压成 `bg.jpg`；加 `--preview` 输出拼图预览 |
+| `gen_plane_sprites.dart` | `dart run tool/gen_plane_sprites.dart` 从 `plane-*.jpg` 裁切、去棋盘格背景、按机头对齐导出机型帧；把 `baozha.jpg` 的 4×4 黑底序列亮度抠图切成 15 帧爆炸；把 `plane-bg.jpg` 压成 `bg.jpg`。加 `--preview` 输出拼图预览 |
 | `gen_dev_icon.dart` | 生成 dev 版红色角标启动图标 |
 | `sync_web_icons.dart` | 以 Android 主图标为源同步 `web/icons/` |
 

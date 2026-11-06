@@ -66,3 +66,12 @@ const double kEnemySpriteAnchor = 0.65;
 // 没有冷却的话高血量敌机会一直处于闪白状态。
 const double kHitFlashDuration = 0.12;
 const double kHitFlashCooldown = 0.40;
+
+// ---- 爆炸精灵帧动画 ----
+// 素材共 15 帧：小飞机只放前 4 帧（闪光 → 小爆），大飞机放完整序列（→ 烟雾消散）。
+const int kExplosionFrameCount = 15;
+const int kSmallExplosionFrames = 4;
+const double kSmallExplosionSize = 42;
+const double kBigExplosionSize = 120;
+const double kSmallExplosionDuration = 0.28;
+const double kBigExplosionDuration = 0.90;

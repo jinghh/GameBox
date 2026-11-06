@@ -202,6 +202,7 @@ void main(List<String> args) {
   }
 
   _writeBackground();
+  _writeExplosions();
 
   if (preview) {
     _writePreview(previewFrames);
@@ -355,6 +356,101 @@ img.Image _trimTransparent(img.Image im) {
     width: x1 - x0 + 1,
     height: y1 - y0 + 1,
   );
+}
+
+/// 爆炸雪碧图：黑底 4x4 序列（最后一格空），按格切帧并做亮度抠底。
+/// 黑底发光素材不适合用颜色键硬切，这里把亮度映射成 alpha，
+/// 亮核心不透明、暗烟雾半透明、纯黑背景完全透明。
+void _writeExplosions() {
+  const src = '$_srcDir/baozha.jpg';
+  const int cols = 4;
+  const int rows = 4;
+  const int maxSide = 192;
+  final file = File(src);
+  if (!file.existsSync()) {
+    stdout.writeln('skip explosions: $src not found');
+    return;
+  }
+  final im = img.decodeJpg(file.readAsBytesSync())!;
+  final cellW = im.width ~/ cols;
+  final cellH = im.height ~/ rows;
+  final frames = <img.Image>[];
+
+  for (var row = 0; row < rows; row++) {
+    for (var col = 0; col < cols; col++) {
+      var cell = img.copyCrop(
+        im,
+        x: col * cellW,
+        y: row * cellH,
+        width: cellW,
+        height: cellH,
+      ).convert(numChannels: 4);
+      _removeBlackBackground(cell);
+      if (_opaqueArea(cell) < 300) continue; // 空白格
+      cell = _trimTransparent(cell);
+      frames.add(cell);
+    }
+  }
+  if (frames.isEmpty) return;
+
+  final maxW = frames.map((e) => e.width).reduce(max);
+  final maxH = frames.map((e) => e.height).reduce(max);
+  final scale = maxSide / max(maxW, maxH);
+  final canvasW = (maxW * scale).round();
+  final canvasH = (maxH * scale).round();
+
+  for (var i = 0; i < frames.length; i++) {
+    final resized = img.copyResize(
+      frames[i],
+      width: (frames[i].width * scale).round(),
+      height: (frames[i].height * scale).round(),
+      interpolation: img.Interpolation.cubic,
+    );
+    final canvas = img.Image(
+      width: canvasW,
+      height: canvasH,
+      numChannels: 4,
+    );
+    img.compositeImage(
+      canvas,
+      resized,
+      dstX: (canvasW - resized.width) ~/ 2,
+      dstY: (canvasH - resized.height) ~/ 2,
+    );
+    final name = (i + 1).toString().padLeft(2, '0');
+    final path = '$_outDir/explosion_$name.png';
+    File(path).writeAsBytesSync(img.encodePng(canvas));
+  }
+  stdout.writeln('explosions: ${frames.length} frames, '
+      '${canvasW}x$canvasH');
+}
+
+void _removeBlackBackground(img.Image im) {
+  for (var y = 0; y < im.height; y++) {
+    for (var x = 0; x < im.width; x++) {
+      final p = im.getPixel(x, y);
+      final r = p.r.toInt();
+      final g = p.g.toInt();
+      final b = p.b.toInt();
+      final mx = max(r, max(g, b));
+      if (mx <= 16) {
+        im.setPixelRgba(x, y, 0, 0, 0, 0);
+        continue;
+      }
+      final a = ((mx - 12) * 5).clamp(0, 255).toInt();
+      im.setPixelRgba(x, y, r, g, b, a);
+    }
+  }
+}
+
+int _opaqueArea(img.Image im) {
+  var n = 0;
+  for (var y = 0; y < im.height; y++) {
+    for (var x = 0; x < im.width; x++) {
+      if (im.getPixel(x, y).a > 16) n++;
+    }
+  }
+  return n;
 }
 
 class _Band {

@@ -9,6 +9,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/services.dart';
 
+import 'plane_constants.dart';
+
 /// 一帧精灵图。预存源矩形与宽高比，避免绘制时重复计算和分配 Rect。
 class SpriteFrame {
   SpriteFrame(this.image)
@@ -32,6 +34,9 @@ class PlaneSprites {
 
   /// 星云背景，独立于机型帧；加载失败时 painter 回退渐变背景。
   SpriteFrame? background;
+
+  /// 爆炸序列帧（小飞机用前几帧，大飞机用完整序列）。
+  final List<SpriteFrame> explosions = [];
 
   static const Map<String, List<String>> _manifest = {
     'player': [
@@ -58,47 +63,46 @@ class PlaneSprites {
     ],
   };
 
-  bool get isEmpty => _frames.isEmpty && background == null;
+  bool get isEmpty =>
+      _frames.isEmpty && background == null && explosions.isEmpty;
 
-  /// 逐帧加载；单帧失败只跳过该帧，painter 会退回几何绘制。
+  /// 逐帧加载；单帧失败只跳过该帧，painter 会退回几何/粒子绘制。
   static Future<PlaneSprites> load() async {
     final map = <String, List<SpriteFrame>>{};
     for (final entry in _manifest.entries) {
       final list = <SpriteFrame>[];
       for (final asset in entry.value) {
-        try {
-          final data = await rootBundle.load(asset);
-          final codec = await ui.instantiateImageCodec(
-            data.buffer.asUint8List(),
-          );
-          try {
-            final frame = await codec.getNextFrame();
-            list.add(SpriteFrame(frame.image));
-          } finally {
-            codec.dispose();
-          }
-        } on Object {
-          // 忽略单帧加载失败，不影响其余帧与游戏逻辑
-        }
+        final frame = await _decode(asset);
+        if (frame != null) list.add(frame);
       }
       if (list.isNotEmpty) map[entry.key] = list;
     }
     final sprites = PlaneSprites._(map);
+    sprites.background = await _decode('assets/image/plane/bg.jpg');
+    for (var i = 1; i <= kExplosionFrameCount; i++) {
+      final name = i.toString().padLeft(2, '0');
+      final frame = await _decode('assets/image/plane/explosion_$name.png');
+      if (frame != null) sprites.explosions.add(frame);
+    }
+    return sprites;
+  }
+
+  /// 统一解码：任何一帧/背景缺失都返回 null，不让资源问题影响游戏逻辑。
+  static Future<SpriteFrame?> _decode(String asset) async {
     try {
-      final data = await rootBundle.load('assets/image/plane/bg.jpg');
+      final data = await rootBundle.load(asset);
       final codec = await ui.instantiateImageCodec(
         data.buffer.asUint8List(),
       );
       try {
         final frame = await codec.getNextFrame();
-        sprites.background = SpriteFrame(frame.image);
+        return SpriteFrame(frame.image);
       } finally {
         codec.dispose();
       }
     } on Object {
-      // 背景缺失时 painter 使用渐变兜底，不影响游戏
+      return null;
     }
-    return sprites;
   }
 
   /// 按时间取动画帧：火焰状态循环播放。
@@ -118,5 +122,9 @@ class PlaneSprites {
     _frames.clear();
     background?.image.dispose();
     background = null;
+    for (final frame in explosions) {
+      frame.image.dispose();
+    }
+    explosions.clear();
   }
 }

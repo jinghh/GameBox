@@ -229,6 +229,7 @@ class _PlanePageState extends State<PlanePage>
     _stepBullets(_scene.enemyBullets, dt);
     _updatePowerUps(dt);
     _updateParticles(dt);
+    _updateExplosions(dt);
     _collide();
     _syncHud();
   }
@@ -509,6 +510,13 @@ class _PlanePageState extends State<PlanePage>
     _scene.particles.removeWhere((p) => p.life <= 0);
   }
 
+  void _updateExplosions(double dt) {
+    for (final e in _scene.explosions) {
+      e.t += dt;
+    }
+    _scene.explosions.removeWhere((e) => e.done);
+  }
+
   // ---- 碰撞 ----
   void _collide() {
     final p = _scene.player;
@@ -562,7 +570,7 @@ class _PlanePageState extends State<PlanePage>
       if (!e.rect.overlaps(p.rect)) continue;
       if (e.kind != EnemyKind.boss) {
         e.dead = true;
-        _explode(e.x, e.y, big: e.kind == EnemyKind.heavy);
+        _addExplosion(e);
       }
       _damagePlayer();
       break;
@@ -575,8 +583,8 @@ class _PlanePageState extends State<PlanePage>
   void _killEnemy(Enemy e) {
     e.dead = true;
     _score += e.score;
+    _addExplosion(e);
     final big = e.kind == EnemyKind.heavy || e.kind == EnemyKind.boss;
-    _explode(e.x, e.y, big: big);
     if (big) {
       _sound.bigExplode();
     } else {
@@ -590,6 +598,41 @@ class _PlanePageState extends State<PlanePage>
       _scene.powerUps.add(PowerUp(PowerKind.bomb, e.x + 24, e.y));
     } else if (_rng.nextDouble() < 0.13) {
       _dropPower(e.x, e.y);
+    }
+  }
+
+  /// 小飞机：4 帧短爆；重装机：完整序列中等尺寸；
+  /// Boss：完整序列大尺寸 + 两侧机翼错峰小爆，视觉上明显更复杂。
+  void _addExplosion(Enemy e) {
+    switch (e.kind) {
+      case EnemyKind.scout:
+      case EnemyKind.zigzag:
+        _scene.explosions.add(Explosion(e.x, e.y, ExplosionKind.small));
+        break;
+      case EnemyKind.heavy:
+        _scene.explosions.add(
+          Explosion(e.x, e.y, ExplosionKind.big, size: 82),
+        );
+        break;
+      case EnemyKind.boss:
+        _scene.explosions.add(
+          Explosion(e.x, e.y, ExplosionKind.big, size: 150),
+        );
+        _scene.explosions.add(Explosion(
+          e.x - 55,
+          e.y + 10,
+          ExplosionKind.small,
+          size: 64,
+          delay: 0.10,
+        ));
+        _scene.explosions.add(Explosion(
+          e.x + 55,
+          e.y - 10,
+          ExplosionKind.small,
+          size: 64,
+          delay: 0.22,
+        ));
+        break;
     }
   }
 
@@ -629,7 +672,10 @@ class _PlanePageState extends State<PlanePage>
 
   void _damagePlayer() {
     final p = _scene.player;
-    _explode(p.x, p.y, big: p.shield <= 0);
+    // 破盾只是短促火花，掉命才放完整大爆炸
+    _scene.explosions.add(p.shield > 0
+        ? Explosion(p.x, p.y, ExplosionKind.small, size: 56)
+        : Explosion(p.x, p.y, ExplosionKind.big, size: 96));
     if (p.shield > 0) {
       p.shield = 0;
       p.invuln = 0.9; // 破盾后短暂无敌，避免同一波弹幕连扣两条命
@@ -649,7 +695,8 @@ class _PlanePageState extends State<PlanePage>
 
   // ---- 特效 ----
   void _explode(double x, double y, {required bool big}) {
-    final count = big ? 22 : 10;
+    // 主体爆炸已由精灵帧承担，这里只留少量飞散火花做点缀
+    final count = big ? 8 : 4;
     if (_scene.particles.length + count > kMaxParticles) return;
     for (var i = 0; i < count; i++) {
       final a = _rng.nextDouble() * math.pi * 2;

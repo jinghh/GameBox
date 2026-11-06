@@ -36,6 +36,7 @@ class PlanePainter extends CustomPainter {
     _drawBullets(canvas);
     _drawEnemies(canvas);
     _drawPlayer(canvas);
+    _drawExplosions(canvas);
     _drawParticles(canvas);
 
     if (scene.flash > 0) {
@@ -275,6 +276,29 @@ class PlanePainter extends CustomPainter {
     canvas.drawOval(const Rect.fromLTWH(-3.5, -11, 7, 12), _cockpitPaint);
     canvas.drawRect(const Rect.fromLTWH(-1, 8, 2, 8), _stripePaint);
     canvas.restore();
+  }
+
+  // ---- 爆炸 ----
+  void _drawExplosions(Canvas canvas) {
+    final frames = sprites?.explosions;
+    if (frames == null || frames.isEmpty) return;
+    for (final e in scene.explosions) {
+      if (e.t < e.delay) continue;
+      final count = e.kind == ExplosionKind.small
+          ? math.min(kSmallExplosionFrames, frames.length)
+          : frames.length;
+      final p = e.progress;
+      final idx = (p * count).floor().clamp(0, count - 1).toInt();
+      final frame = frames[idx];
+      // 爆开过程中略微膨胀，最后随烟雾帧消散
+      final size = e.visualSize * (0.85 + 0.3 * p);
+      final dst = Rect.fromCenter(
+        center: Offset(e.x, e.y),
+        width: size * frame.aspect,
+        height: size,
+      );
+      canvas.drawImageRect(frame.image, frame.src, dst, _spritePaint);
+    }
   }
 
   // ---- 道具 ----

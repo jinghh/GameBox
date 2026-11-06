@@ -110,6 +110,32 @@ class Particle {
   final Color color;
 }
 
+enum ExplosionKind { small, big }
+
+/// 一次爆炸：按时间播放精灵帧序列，[delay] 用于 Boss 的多段错峰爆点。
+class Explosion {
+  Explosion(this.x, this.y, this.kind, {this.size, this.delay = 0});
+
+  final double x, y;
+  final ExplosionKind kind;
+  final double? size;
+  final double delay;
+  double t = 0;
+
+  double get duration => kind == ExplosionKind.small
+      ? kSmallExplosionDuration
+      : kBigExplosionDuration;
+
+  double get visualSize => size ??
+      (kind == ExplosionKind.small
+          ? kSmallExplosionSize
+          : kBigExplosionSize);
+
+  double get progress => ((t - delay) / duration).clamp(0.0, 1.0);
+
+  bool get done => t - delay >= duration;
+}
+
 class Star {
   Star({
     required this.x,
@@ -131,6 +157,7 @@ class PlaneScene {
   final List<Enemy> enemies = [];
   final List<PowerUp> powerUps = [];
   final List<Particle> particles = [];
+  final List<Explosion> explosions = [];
   final List<Star> stars = [];
   final Random rng = Random();
 
@@ -159,6 +186,7 @@ class PlaneScene {
     enemies.clear();
     powerUps.clear();
     particles.clear();
+    explosions.clear();
     player.reset();
     time = 0;
     flash = 0;
