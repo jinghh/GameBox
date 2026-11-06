@@ -20,7 +20,14 @@ void main() {
       expect(sprites.background, isNotNull, reason: '缺少星云背景');
       expect(sprites.explosions, hasLength(kExplosionFrameCount),
           reason: '爆炸序列帧数不完整');
-      for (final id in ['player', 'scout', 'zigzag', 'heavy', 'boss']) {
+      for (final id in [
+        'player',
+        'scout',
+        'zigzag',
+        'heavy',
+        'boss',
+        'boss_b',
+      ]) {
         expect(sprites.pick(id, 0, 1), isNotNull, reason: '缺少 $id 的动画帧');
       }
     } finally {

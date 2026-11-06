@@ -66,6 +66,7 @@ class Enemy {
     required this.score,
     required this.fireCd,
     this.phase = 0,
+    this.bossVariant = 0,
   })  : hp = hp,
         maxHp = hp,
         baseX = x;
@@ -73,6 +74,8 @@ class Enemy {
   final EnemyKind kind;
   double x, y, vx, vy;
   final double w, h, baseX, phase;
+  /// Boss 样式：0 = 重装机械（Style A），1 = 异星生物科技（Style B）。
+  final int bossVariant;
   int hp;
   final int maxHp, score;
   double t = 0;

@@ -61,6 +61,10 @@ class PlaneSprites {
       'assets/image/plane/boss_1.png',
       'assets/image/plane/boss_2.png',
     ],
+    'boss_b': [
+      'assets/image/plane/boss_b_1.png',
+      'assets/image/plane/boss_b_2.png',
+    ],
   };
 
   bool get isEmpty =>

@@ -123,7 +123,7 @@ class PlanePainter extends CustomPainter {
   void _drawEnemies(Canvas canvas) {
     for (final e in scene.enemies) {
       final sprite =
-          sprites?.pick(_spriteId(e.kind), scene.time, _spriteFps(e.kind));
+          sprites?.pick(_spriteId(e), scene.time, _spriteFps(e.kind));
       if (sprite != null) {
         _drawSprite(
           canvas,
@@ -141,11 +141,11 @@ class PlanePainter extends CustomPainter {
     }
   }
 
-  static String _spriteId(EnemyKind kind) => switch (kind) {
+  static String _spriteId(Enemy e) => switch (e.kind) {
         EnemyKind.scout => 'scout',
         EnemyKind.zigzag => 'zigzag',
         EnemyKind.heavy => 'heavy',
-        EnemyKind.boss => 'boss',
+        EnemyKind.boss => e.bossVariant == 1 ? 'boss_b' : 'boss',
       };
 
   static double _spriteFps(EnemyKind kind) => switch (kind) {
@@ -196,7 +196,9 @@ class PlanePainter extends CustomPainter {
       EnemyKind.scout => const Color(0xFFEF5350),
       EnemyKind.zigzag => const Color(0xFFBA68C8),
       EnemyKind.heavy => const Color(0xFFFF8A3D),
-      EnemyKind.boss => const Color(0xFF8C7AE6),
+      EnemyKind.boss => e.bossVariant == 1
+          ? const Color(0xFF26C6A6)
+          : const Color(0xFF8C7AE6),
     };
     canvas.drawPath(path, _enemyFill..color = color);
     canvas.drawPath(path, _enemyStroke..color = color.withValues(alpha: 0.85));

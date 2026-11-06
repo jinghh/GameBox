@@ -79,6 +79,12 @@ const List<GroupSpec> _groups = [
     FrameSpec(file: 'plane-2.jpg', x: 0, y: 55, w: 1376, h: 830, rotate: 180),
     FrameSpec(file: 'plane-2.jpg', x: 1376, y: 55, w: 1376, h: 830, rotate: 180),
   ]),
+  // 图 2 下半幅 STYLE B：异星生物科技 Boss（两帧）。
+  // 同样按中线一分为二；下边界收在底部标注文字之前，尾焰刚好保留。
+  GroupSpec(id: 'boss_b', maxSide: 512, frames: [
+    FrameSpec(file: 'plane-2.jpg', x: 0, y: 885, w: 1376, h: 645, rotate: 180),
+    FrameSpec(file: 'plane-2.jpg', x: 1376, y: 885, w: 1376, h: 645, rotate: 180),
+  ]),
   // 图 3 STYLE A：高科技流线型玩家机（机头已朝上，两帧）
   GroupSpec(id: 'player', maxSide: 288, frames: [
     FrameSpec(file: 'plane-3.jpg', x: 72, y: 158, w: 594, h: 1080),

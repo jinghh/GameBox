@@ -382,6 +382,8 @@ class _PlanePageState extends State<PlanePage>
 
   void _spawnBoss() {
     _bossActive = true;
+    // 每 4 波一个 Boss，两种样式按出场次序交替：4/12/20 波 Style A，8/16/24 波 Style B。
+    final variant = ((_wave ~/ kBossEveryWaves) - 1) % 2;
     _scene.enemies.add(Enemy(
       kind: EnemyKind.boss,
       x: kPlaneW / 2,
@@ -393,6 +395,7 @@ class _PlanePageState extends State<PlanePage>
       hp: planeBossHp(_wave),
       score: 500,
       fireCd: 1.8,
+      bossVariant: variant,
     ));
   }
 
